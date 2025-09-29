@@ -1,0 +1,31 @@
+[project]
+name = "acr"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "inksne", email = "inksne@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "typer (>=0.19.2,<0.20.0)",
+    "pytest (>=8.4.2,<9.0.0)",
+    "mypy (>=1.18.2,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "acr", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.mypy]
+python_version = "3.13"
+namespace_packages = true
+check_untyped_defs = true
+show_error_codes = true
+strict = true
+ignore_missing_imports = true
