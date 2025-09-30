@@ -8,6 +8,7 @@ from .configuration import APP_VERSION, DESCRIPTION
 from .foo import app as foo_app
 
 
+
 app = typer.Typer(name='reviewbot', help=DESCRIPTION, no_args_is_help=True, rich_markup_mode='rich')
 
 app.add_typer(foo_app)
