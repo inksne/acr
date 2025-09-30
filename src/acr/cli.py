@@ -17,7 +17,7 @@ console = Console()
 
 
 @app.callback(invoke_without_command=True)
-def callback(ctx: typer.Context, version: bool = typer.Option(False, '--version', '-v', help='Show version and exit')):
+def callback(ctx: typer.Context, version: bool = typer.Option(False, '--version', '-v', help='Show version and exit')) -> None:
     if version:
         console.print(f'ACR {APP_VERSION}')
         raise typer.Exit()
