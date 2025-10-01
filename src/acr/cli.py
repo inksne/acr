@@ -26,8 +26,8 @@ def callback(ctx: typer.Context, version: bool = typer.Option(False, '--version'
         console.print('Use [bold]--help[/bold] to view available commands.')
         raise typer.Exit(1)
 
-    if sys.version_info < (3, 8):
-        console.print('Python [bold]3.8[/bold] or higher required.')
+    if sys.version_info < (3, 9):
+        console.print('Python [bold]3.9[/bold] or higher required.')
         raise typer.Exit(1)
 
 

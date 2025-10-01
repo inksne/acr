@@ -6,11 +6,12 @@ authors = [
     {name = "inksne", email = "inksne@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.9"
 dependencies = [
     "typer (>=0.19.2,<0.20.0)",
     "pytest (>=8.4.2,<9.0.0)",
-    "mypy (>=1.18.2,<2.0.0)"
+    "mypy (>=1.18.2,<2.0.0)",
+    "gitpython (>=3.1.45,<4.0.0)",
 ]
 
 [tool.poetry]
