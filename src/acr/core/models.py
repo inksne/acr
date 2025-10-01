@@ -78,6 +78,7 @@ class ReviewConfig:
         strict: bool = False,
         output_format: str = "text"
     ) -> None:
+
         self.rules = rules or self._get_default_rules()
         self.ignore_patterns = ignore_patterns or []
         self.exclude_paths = exclude_paths or []
@@ -124,6 +125,7 @@ class AnalysisResult:
         total_issues: int = 0,
         duration: float = 0.0
     ) -> None:
+
         self.issues = issues or []
         self.files_analyzed = files_analyzed
         self.total_issues = total_issues

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import git
 
@@ -55,7 +55,7 @@ class GitRepo:
         return [Path(item) for item in self.repo.untracked_files]
 
 
-    def get_diff_for_file(self, file_path: Path) -> str:
+    def get_diff_for_file(self, file_path: Path) -> Any:
         """Get diff for specific file."""
         try:
             return self.repo.git.diff(file_path)
@@ -64,7 +64,7 @@ class GitRepo:
             return ""
 
 
-    def get_file_content_at_commit(self, file_path: Path, commit_hash: str) -> Optional[str]:
+    def get_file_content_at_commit(self, file_path: Path, commit_hash: str) -> Any:
         """Get file content at specific commit."""
         try:
             return self.repo.git.show(f"{commit_hash}:{file_path}")
