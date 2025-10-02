@@ -3,6 +3,8 @@ from typing import Optional, Any
 from pathlib import Path
 from enum import Enum
 
+from ..configuration import MAX_LINES_FUNCTION
+
 
 
 class SeverityLevel(Enum):
@@ -103,7 +105,7 @@ class ReviewConfig:
                 name="Long Function Detection",
                 description="Identify functions that are too long",
                 severity=SeverityLevel.INFO,
-                parameters={"max_lines": 50}
+                parameters={"max_lines": MAX_LINES_FUNCTION}
             ),
 
             "unused_import": Rule(
