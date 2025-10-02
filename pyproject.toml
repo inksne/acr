@@ -1,7 +1,7 @@
 [project]
 name = "acr"
 version = "0.1.1"
-description = ""
+description = "ACR - Automated Code Review"
 authors = [
     {name = "inksne", email = "inksne@gmail.com"}
 ]
