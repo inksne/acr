@@ -3,7 +3,7 @@ import logging
 from typing import Final
 
 
-APP_VERSION: Final[str] = '0.1.0'
+APP_VERSION: Final[str] = '0.1.1'
 DESCRIPTION: Final[str] = '''
 🔍 [bold]ACR - Automated Code Review[/bold]
 
