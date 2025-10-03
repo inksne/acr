@@ -3,7 +3,7 @@ import logging
 from typing import Final
 
 
-APP_VERSION: Final[str] = '0.1.1'
+APP_VERSION: Final[str] = '0.1.2'
 MAX_LINES_FUNCTION: Final[int] = 50
 DESCRIPTION: Final[str] = '''
 🔍 [bold]ACR - Automated Code Review[/bold]

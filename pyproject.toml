@@ -1,6 +1,6 @@
 [project]
 name = "acr"
-version = "0.1.1"
+version = "0.1.2"
 description = "ACR - Automated Code Review"
 authors = [
     {name = "inksne", email = "inksne@gmail.com"}
@@ -12,6 +12,7 @@ dependencies = [
     "pytest (>=8.4.2,<9.0.0)",
     "mypy (>=1.18.2,<2.0.0)",
     "gitpython (>=3.1.45,<4.0.0)",
+    "types-pyyaml (>=6.0.12.20250915,<7.0.0.0)",
 ]
 
 [tool.poetry]
