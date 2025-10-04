@@ -4,7 +4,7 @@ from pathlib import Path
 from enum import Enum
 
 from ..configuration import (
-    MAX_LINES_FUNCTION,
+    MAX_LINES_FUNCTION, MAX_COMPLEXITY,
     DEFAULT_MAX_LINE_LENGTH, DEFAULT_OUTPUT_FORMAT, DEFAULT_FILES_ANALYZED, DEFAULT_DURATION, DEFAULT_TOTAL_ISSUES
 )
 
@@ -91,10 +91,8 @@ class ReviewConfig:
         self.strict = strict
         self.output_format = output_format
 
-
     def _get_default_rules(self) -> dict[str, Rule]:
-        # Initialize default rules if none provided
-
+        """Get default rules."""
         return {
             "magic_number": Rule(
                 id="magic_number",
@@ -107,7 +105,7 @@ class ReviewConfig:
                 id="long_function", 
                 name="Long Function Detection",
                 description="Identify functions that are too long",
-                severity=SeverityLevel.INFO,
+                severity=SeverityLevel.WARNING,
                 parameters={"max_lines": MAX_LINES_FUNCTION}
             ),
 
@@ -116,6 +114,14 @@ class ReviewConfig:
                 name="Unused Import Detection", 
                 description="Find imports that are not used",
                 severity=SeverityLevel.WARNING
+            ),
+
+            "high_complexity": Rule(
+                id="high_complexity",
+                name="High Complexity Detection",
+                description="Identify functions with high cyclomatic complexity",
+                severity=SeverityLevel.WARNING,
+                parameters={"max_complexity": MAX_COMPLEXITY}
             ),
         }
 

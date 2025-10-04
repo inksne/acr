@@ -6,6 +6,8 @@ from typing import Final
 APP_VERSION: Final[str] = '0.1.2'
 
 MAX_LINES_FUNCTION: Final[int] = 50
+MAX_COMPLEXITY: Final[int] = 10
+
 DEFAULT_MAX_LINE_LENGTH: Final[int] = 100
 DEFAULT_OUTPUT_FORMAT: Final[str] = 'text'
 DEFAULT_FILES_ANALYZED: Final[int] = 0
