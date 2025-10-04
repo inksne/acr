@@ -3,10 +3,8 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from acr.core.analyzer import CodeAnalyzer
-from acr.core.models import AnalysisResult, ReviewConfig
-from acr.utils.output import print_analysis_result
-from acr.utils.config_manager import load_config
+from ..core import CodeAnalyzer, ReviewConfig, AnalysisResult
+from ..utils import load_config, print_analysis_result
 
 
 
