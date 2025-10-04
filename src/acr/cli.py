@@ -4,14 +4,13 @@ from rich.console import Console
 import sys
 
 from .configuration import APP_VERSION, DESCRIPTION
-
-from .foo import app as foo_app
+from .commands import review_app
 
 
 
 app = typer.Typer(name='reviewbot', help=DESCRIPTION, no_args_is_help=True, rich_markup_mode='rich')
 
-app.add_typer(foo_app)
+app.add_typer(review_app, name='review', help='Code analysis commands')
 
 console = Console()
 
