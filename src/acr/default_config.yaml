@@ -1,0 +1,45 @@
+# ACR - Automated Code Review Configuration
+# This file configures the code analysis rules and behavior
+
+# Global settings
+max_line_length: 100
+strict: false
+output_format: rich  # rich, text, json
+
+# Files and paths to ignore (glob patterns)
+ignore_patterns:
+  - "**/migrations/**"
+  - "**/tests/**"
+  - "**/__pycache__/**"
+  - "**/*.pyc"
+  - "**/venv/**"
+  - "**/.git/**"
+
+# Specific paths to exclude (exact matches)
+exclude_paths:
+  - "legacy_code/"
+  - "experimental/"
+
+
+rules:
+  magic_number:
+    enabled: true
+    severity: warning  # info, warning, error, critical
+    parameters: {}
+    
+  long_function:
+    enabled: true
+    severity: warning
+    parameters:
+      max_lines: 50
+      
+  unused_import:
+    enabled: true
+    severity: warning
+    parameters: {}
+    
+  high_complexity:
+    enabled: true
+    severity: warning
+    parameters:
+      max_complexity: 10
