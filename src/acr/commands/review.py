@@ -1,10 +1,11 @@
 from pathlib import Path
+from typing import Optional
 import typer
 from rich.console import Console
 from rich.panel import Panel
 
 from ..core import CodeAnalyzer, ReviewConfig, AnalysisResult
-from ..utils import load_config, print_analysis_result
+from ..utils import load_config, find_config_file, print_analysis_result
 
 
 
@@ -16,7 +17,7 @@ console = Console()
 @app.command()
 def current(
     path: str = typer.Argument(".", help="[bold green]Path[/bold green] to git repository"),
-    config_file: str = typer.Option(".acr.yaml", "--config", "-c", help="[yellow]Config file[/yellow] path"),
+    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
 ) -> None:
@@ -31,10 +32,26 @@ def current(
     """
     try:
         target_path = Path(path)
-        config_path = Path(config_file)
+        config_path: Optional[Path] = None
 
-        config = load_config(config_path) if config_path.exists() else ReviewConfig()
+        if config_file:
+            config_path = Path(config_file)
+            if not config_path.exists():
+                console.print(f"⚠️  [yellow]Config file not found: {config_path}, using defaults[/yellow]")
+                config_path = None
+
+        else:
+            config_path = find_config_file(target_path)
+
+        config = load_config(config_path)
         config.strict = strict
+
+
+        if config_path and config_path.exists():
+            console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
+    
+        else:
+            console.print("⚙️  [dim]Using default configuration[/dim]")
 
         analyzer = CodeAnalyzer(config)
 
@@ -69,8 +86,8 @@ def current(
 
 @app.command()
 def file(
-    file_path: str = typer.Argument(help="[bold green]File[/bold green] to analyze"),
-    config_file: str = typer.Option(".acr.yaml", "--config", "-c", help="[yellow]Config file[/yellow] path"),
+    file_path: str = typer.Argument(..., help="[bold green]File[/bold green] to analyze"),
+    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
 ) -> None:
@@ -83,7 +100,7 @@ def file(
     """
     try:
         target_file = Path(file_path)
-        config_path = Path(config_file)
+        config_path: Optional[Path] = None
 
         if not target_file.exists():
             console.print(f"❌ [bold red]File not found:[/bold red] {target_file}")
@@ -95,8 +112,24 @@ def file(
             raise typer.Exit(1)
 
 
-        config = load_config(config_path) if config_path.exists() else ReviewConfig()
+        if config_file:
+            config_path = Path(config_file)
+            if not config_path.exists():
+                console.print(f"⚠️  [yellow]Config file not found: {config_path}, using defaults[/yellow]")
+                config_path = None
+
+        else:
+            config_path = find_config_file(target_file.parent)
+
+        config = load_config(config_path)
         config.strict = strict
+
+
+        if config_path and config_path.exists():
+            console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
+    
+        else:
+            console.print("⚙️  [dim]Using default configuration[/dim]")
         
 
         analyzer = CodeAnalyzer(config)
@@ -123,7 +156,7 @@ def file(
 @app.command()
 def directory(
     directory_path: str = typer.Argument(".", help="[bold green]Directory[/bold green] to analyze"),
-    config_file: str = typer.Option(".acr.yaml", "--config", "-c", help="[yellow]Config file[/yellow] path"),
+    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json",show_choices=True),
     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
 ) -> None:
@@ -136,7 +169,7 @@ def directory(
     """
     try:
         target_dir = Path(directory_path)
-        config_path = Path(config_file)
+        config_path: Optional[Path] = None
 
         if not target_dir.exists():
             console.print(f"❌ [bold red]Directory not found:[/bold red] {target_dir}")
@@ -147,8 +180,24 @@ def directory(
             raise typer.Exit(1)
 
 
-        config = load_config(config_path) if config_path.exists() else ReviewConfig()
+        if config_file:
+            config_path = Path(config_file)
+            if not config_path.exists():
+                console.print(f"⚠️  [yellow]Config file not found: {config_path}, using defaults[/yellow]")
+                config_path = None
+
+        else:
+            config_path = find_config_file(target_dir)
+
+        config = load_config(config_path)
         config.strict = strict
+
+
+        if config_path and config_path.exists():
+            console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
+    
+        else:
+            console.print("⚙️  [dim]Using default configuration[/dim]")
 
 
         analyzer = CodeAnalyzer(config)
@@ -192,7 +241,7 @@ def directory(
 def branch(
     base_branch: str = typer.Argument("main", help="[bold green]Base branch[/bold green] for comparison"),
     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
-    config_file: str = typer.Option(".acr.yaml", "--config", "-c", help="[yellow]Config file[/yellow] path"),
+    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
 ) -> None:
@@ -213,7 +262,7 @@ def branch(
 @app.command()
 def staged(
     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
-    config_file: str = typer.Option(".acr.yaml", "--config", "-c", help="[yellow]Config file[/yellow] path"),
+    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json",show_choices=True),
     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
 ) -> None:
@@ -226,10 +275,27 @@ def staged(
     """
     try:
         target_path = Path(repo_path)
-        config_path = Path(config_file)
+        config_path: Optional[Path] = None
 
-        config = load_config(config_path) if config_path.exists() else ReviewConfig()
+
+        if config_file:
+            config_path = Path(config_file)
+            if not config_path.exists():
+                console.print(f"⚠️  [yellow]Config file not found: {config_path}, using defaults[/yellow]")
+                config_path = None
+
+        else:
+            config_path = find_config_file(target_path)
+
+        config = load_config(config_path)
         config.strict = strict
+
+
+        if config_path and config_path.exists():
+            console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
+    
+        else:
+            console.print("⚙️  [dim]Using default configuration[/dim]")
 
         analyzer = CodeAnalyzer(config)
         git_repo = analyzer.git_repo
