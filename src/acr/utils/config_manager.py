@@ -1,12 +1,35 @@
 from rich.console import Console
 from rich.panel import Panel
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import yaml
 
 from .helpers import get_main_table, get_rules_table
 from ..core import ReviewConfig, Rule, SeverityLevel
 
+
+def find_config_file(start_path: Path = Path(".")) -> Optional[Path]:
+    """
+    Find .acr.yaml starting from start_path and going up to filesystem root.
+    
+    Args:
+        start_path: Path to start searching from (default: current directory)
+        
+    Returns:
+        Path to .acr.yaml if found, None otherwise
+    """
+    current = start_path.resolve()
+
+    # Search current directory and all parent directories
+    while current != current.parent:  # Stop at filesystem root
+        config_path = current / ".acr.yaml"
+
+        if config_path.exists():
+            return config_path
+
+        current = current.parent
+
+    return None
 
 
 def _config_to_dict(config: ReviewConfig) -> dict[str, Any]:
@@ -53,15 +76,15 @@ def _dict_to_config(data: dict[str, Any]) -> ReviewConfig:
     )
 
 
-def load_config(config_path: Path) -> ReviewConfig:
-    """Load configuration from YAML file."""
-    if not config_path.exists():
+def load_config(config_path: Optional[Path] = None) -> ReviewConfig:
+    """Load configuration from yaml file or return default config."""
+    if config_path is None or (not config_path.exists()):
         return ReviewConfig()
 
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config_data = yaml.safe_load(f) or {}
-
+        
         return _dict_to_config(config_data)
 
     except (yaml.YAMLError, KeyError, ValueError) as e:
