@@ -3,7 +3,10 @@ from typing import Optional, Any
 from pathlib import Path
 from enum import Enum
 
-from ..configuration import MAX_LINES_FUNCTION
+from ..configuration import (
+    MAX_LINES_FUNCTION,
+    DEFAULT_MAX_LINE_LENGTH, DEFAULT_OUTPUT_FORMAT, DEFAULT_FILES_ANALYZED, DEFAULT_DURATION, DEFAULT_TOTAL_ISSUES
+)
 
 
 
@@ -76,9 +79,9 @@ class ReviewConfig:
         rules: Optional[dict[str, Rule]] = None,
         ignore_patterns: Optional[list[str]] = None,
         exclude_paths: Optional[list[str]] = None,
-        max_line_length: int = 100,
+        max_line_length: int = DEFAULT_MAX_LINE_LENGTH,
         strict: bool = False,
-        output_format: str = "text"
+        output_format: str = DEFAULT_OUTPUT_FORMAT
     ) -> None:
 
         self.rules = rules or self._get_default_rules()
@@ -123,9 +126,9 @@ class AnalysisResult:
     def __init__(
         self,
         issues: Optional[list[CodeIssue]] = None,
-        files_analyzed: int = 0,
-        total_issues: int = 0,
-        duration: float = 0.0
+        files_analyzed: int = DEFAULT_FILES_ANALYZED,
+        total_issues: int = DEFAULT_TOTAL_ISSUES,
+        duration: float = DEFAULT_DURATION
     ) -> None:
 
         self.issues = issues or []
@@ -150,4 +153,5 @@ class AnalysisResult:
         summary = {}
         for severity in SeverityLevel:
             summary[severity] = len(self.get_issues_by_severity(severity))
+
         return summary
