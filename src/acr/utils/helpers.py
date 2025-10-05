@@ -36,7 +36,7 @@ def get_severity_color(severity: SeverityLevel) -> str:
 
 def get_summary_table(severity_styles: dict[SeverityLevel, str], by_severity: dict[SeverityLevel, list[CodeIssue]] = {}) -> Table:
     """Returns summary table."""
-    summary_table = Table(show_header=True, header_style="bold magenta")
+    summary_table = Table(show_header=True, header_style="bold magenta", padding=(0, 1), width=40)
 
     summary_table.add_column("Severity", style="cyan")
     summary_table.add_column("Count", justify="center")

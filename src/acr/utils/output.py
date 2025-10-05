@@ -33,7 +33,8 @@ def print_rich_report(issues: list[CodeIssue]) -> None:
 
     summary_table = get_summary_table(severity_styles, by_severity)
 
-    console.print(Panel(summary_table, title="📊 [bold]Code Review Summary[/bold]"))
+    console.print("📊 [bold]Code Review Summary[/bold]")
+    console.print(summary_table)
 
 
     for severity, severity_issues in by_severity.items():
@@ -44,20 +45,13 @@ def print_rich_report(issues: list[CodeIssue]) -> None:
         console.print(f"\n[bold {style}]{severity.value.upper()} ISSUES ({len(severity_issues)})[/bold {style}]")
         
         for issue in severity_issues:
-            issue_text = Text()
-            issue_text.append(f"  {get_severity_icon(issue.severity)} ", style=style)
-            issue_text.append(f"{issue.file}:{issue.line} - ", style="cyan")
-            issue_text.append(issue.message)
-            
-            if issue.suggestion:
-                suggestion_text = Text()
-                suggestion_text.append("     💡 ", style="green")
-                suggestion_text.append(issue.suggestion, style="dim green")
-                console.print(issue_text)
-                console.print(suggestion_text)
+            console.print(f"  {get_severity_icon(issue.severity)} ", style=style, end="")
+            console.print(f"{issue.file}:{issue.line} - ", style="cyan", end="")
+            console.print(issue.message)
 
-            else:
-                console.print(issue_text)
+            if issue.suggestion:
+                console.print("     ", style="green", end="")
+                console.print(issue.suggestion)
 
 
 def print_text_report(issues: list[CodeIssue]) -> None:
