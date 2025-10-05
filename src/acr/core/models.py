@@ -116,6 +116,20 @@ class ReviewConfig:
                 severity=SeverityLevel.WARNING
             ),
 
+            "unused_variable": Rule(
+                id="unused_variable",
+                name="Unused Variable Detection",
+                description="Find variables that are defined but not used",
+                severity=SeverityLevel.WARNING
+            ),
+
+            "undefined_variable": Rule(
+                id="undefined_variable",
+                name="Undefined Variable Detection",
+                description="Find variables that are used but not defined",
+                severity=SeverityLevel.ERROR
+            ),
+
             "high_complexity": Rule(
                 id="high_complexity",
                 name="High Complexity Detection",

@@ -4,7 +4,7 @@ from typing import Optional
 
 from .models import CodeIssue, ReviewConfig, SeverityLevel
 from .git_utils import GitRepo
-from ..configuration import MAX_LINES_FUNCTION
+from ..configuration import MAX_LINES_FUNCTION, MAX_COMPLEXITY
 
 
 
@@ -64,6 +64,8 @@ class CodeAnalyzer:
             issues.extend(self._check_long_functions(tree, file_path))
             issues.extend(self._check_unused_imports(tree, file_path))
             issues.extend(self._check_complex_functions(tree, file_path))
+            issues.extend(self._check_undefined_variables(tree, file_path))
+            issues.extend(self._check_unused_variables(tree, file_path))
 
 
             # Add Git context to issues
@@ -151,16 +153,15 @@ class CodeAnalyzer:
         if not unused_import_rule or not unused_import_rule.enabled:
             return issues
 
-        imports: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imports.add(alias.name.split('.')[0])
 
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    imports.add(node.module.split('.')[0])
- 
+        imports: dict[str, tuple[int, str, str]] = {}
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    actual_name = alias.asname or alias.name
+                    imports[actual_name] = (node.lineno, alias.name, alias.asname or "")
+
 
         used_names: set[str] = set()
         for node in ast.walk(tree):
@@ -168,21 +169,208 @@ class CodeAnalyzer:
                 used_names.add(node.id)
 
 
-        for imported_name in imports:
+        for imported_name, (line, original_name, alias) in imports.items():
             if imported_name not in used_names:
-                for node in ast.walk(tree):
-                    if (isinstance(node, ast.Import) and 
-                        any(alias.name.startswith(imported_name) for alias in node.names)):
-                        issues.append(CodeIssue(
-                            file=file_path,
-                            line=node.lineno,
-                            message=f"❌ [bold yellow]Unused import:[/bold yellow] [bold magenta]{imported_name}[/bold magenta].",
-                            severity=unused_import_rule.severity,
-                            rule_id="unused_import",
-                            suggestion="[italic]Remove this unused import to clean up namespace.[/italic]"
-                        ))
+                if alias:
+                    display_name = f"{original_name} (as {alias})"
 
-                        break
+                else:
+                    display_name = original_name
+
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=line,
+                    message=f"❌ [bold yellow]Unused import:[/bold yellow] [bold magenta]{display_name}[/bold magenta]",
+                    severity=unused_import_rule.severity,
+                    rule_id="unused_import",
+                    suggestion="[italic]Remove this unused import to clean up namespace.[/italic]"
+                ))
+
+
+        return issues
+
+
+    def _collect_defined_names(self, tree: ast.AST) -> set[str]:
+        """Collect all defined names (variables, functions, imports, etc.)."""
+        defined_names = set()
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    defined_names.add(alias.asname or alias.name)
+
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    defined_names.add(alias.asname or alias.name)
+
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        defined_names.add(target.id)
+
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+                defined_names.add(node.name)
+
+            elif isinstance(node, ast.arguments):
+                for arg in node.args:
+                    defined_names.add(arg.arg)
+
+                if node.vararg:
+                    defined_names.add(node.vararg.arg)
+
+                if node.kwarg:
+                    defined_names.add(node.kwarg.arg)
+
+        return defined_names
+
+
+    def _collect_used_names(self, tree: ast.AST) -> list[tuple[str, int]]:
+        """Collect all used variable names with their line numbers."""
+        used_names = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                # Eliminate special names and methods dunder
+                if not node.id.startswith('_') or (node.id.startswith('__') and node.id.endswith('__')):
+                    used_names.append((node.id, node.lineno))
+
+        return used_names
+
+
+    def _is_builtin(self, name: str) -> bool:
+        """Check if name is a Python builtin."""
+        import builtins
+        return hasattr(builtins, name)
+
+
+    def _check_undefined_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for undefined variables using AST analysis."""
+        issues: list[CodeIssue] = []
+        undefined_rule = self.config.rules.get("undefined_variable")
+
+        if not undefined_rule or not undefined_rule.enabled:
+            return issues
+
+
+        defined_names = self._collect_defined_names(tree)
+
+        used_names = self._collect_used_names(tree)
+
+        for name, line in used_names:
+            if name not in defined_names and not self._is_builtin(name):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=line,
+                    message=f"❌ [bold red]Undefined variable:[/bold red] [bold]{name}[/bold]",
+                    severity=undefined_rule.severity,
+                    rule_id="undefined_variable",
+                    suggestion="[italic]Define this variable or check for typos.[/italic]"
+                ))
+
+        return issues
+
+
+    def _collect_used_variables(self, tree: ast.AST) -> set[str]:
+        """Collect all variable names that are used (read from)."""
+        used_vars = set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                # Exclude built-in functions and special names
+                if not self._is_builtin(node.id) and not node.id.startswith('__'):
+                    used_vars.add(node.id)
+
+        return used_vars
+
+
+    def _process_function_arguments(self, func_node: ast.AST, defined_vars: dict[str, tuple[int, str]]) -> None:
+        """Process function arguments and add them to defined_vars."""
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return
+
+        args = func_node.args
+        lineno = func_node.lineno
+
+
+        for arg in args.args:
+            defined_vars[arg.arg] = (lineno, "function parameter")
+
+        # *args
+        if args.vararg:
+            defined_vars[args.vararg.arg] = (lineno, "*args parameter")
+
+        # **kwargs
+        if args.kwarg:
+            defined_vars[args.kwarg.arg] = (lineno, "**kwargs parameter")
+
+        # keyword-only
+        for kwarg in args.kwonlyargs:
+            defined_vars[kwarg.arg] = (lineno, "keyword-only parameter")
+
+
+    def _collect_defined_variables(self, tree: ast.AST) -> dict[str, tuple[int, str]]:
+        """Collect all variable definitions with their line numbers and types."""
+        defined_vars: dict[str, tuple[int, str]] = {}
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        defined_vars[target.id] = (target.lineno, "variable")
+
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                defined_vars[node.target.id] = (node.target.lineno, "typed variable")
+
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._process_function_arguments(node, defined_vars)
+
+        return defined_vars
+
+
+    def _should_ignore_variable(self, var_name: str, var_type: str) -> bool:
+        """Determine if a variable should be ignored from unused checks."""
+        if var_name.startswith('_'):
+            if var_name.startswith('__') and var_name.endswith('__'):
+                return True
+
+            if var_type in ["variable", "typed variable"]:
+                return True
+
+            if var_type not in ["function parameter", "*args parameter", "**kwargs parameter", "keyword-only parameter"]:
+                return True
+
+        ignored_names = {
+            'self', 'cls',
+            'mcs',  # meta classes
+            'args', 'kwargs',
+            'config', 'settings',  # config variables
+        }
+
+        return var_name in ignored_names
+
+
+    def _check_unused_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for variables that are defined but not used."""
+        issues: list[CodeIssue] = []
+        unused_rule = self.config.rules.get("unused_variable")
+        
+        if not unused_rule or not unused_rule.enabled:
+            return issues
+
+        used_variables = self._collect_used_variables(tree)
+
+        defined_variables = self._collect_defined_variables(tree)
+
+        for var_name, (line, var_type) in defined_variables.items():
+            if var_name not in used_variables and not self._should_ignore_variable(var_name, var_type):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=line,
+                    message=f"❌ [bold yellow]Unused variable:[/bold yellow] [bold]{var_name}[/bold] ({var_type})",
+                    severity=unused_rule.severity,
+                    rule_id="unused_variable",
+                    suggestion="[italic]Remove this unused variable to clean up the namespace.[/italic]"
+                ))
 
         return issues
 
@@ -195,7 +383,7 @@ class CodeAnalyzer:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 complexity = self._calculate_complexity(node)
                 
-                if complexity > 10:  # McCabe complexity threshold
+                if complexity > MAX_COMPLEXITY:  # McCabe complexity threshold
                     issues.append(CodeIssue(
                         file=file_path,
                         line=node.lineno,
@@ -228,28 +416,42 @@ class CodeAnalyzer:
         """Generate context-aware suggestions based on Git diff."""
 
         has_changes = bool(file_diff.strip())
-        
+
         if "magic number" in issue.message.lower():
             if has_changes:
                 return "[green]🔧 Consider extracting this magic number to a named constant [bold]before committing[/bold].[/green]"
 
             else:
                 return "[green]💡 Consider extracting this magic number to a named constant during refactoring.[/green]"
-        
+
         elif "too long" in issue.message.lower():
             if has_changes:
                 return "[green]🔧 This might be a good candidate for refactoring [bold]before committing[/bold].[/green]"
 
             else:
                 return "[green]💡 Consider breaking this function into smaller pieces during code review.[/green]"
-        
+
         elif "unused import" in issue.message.lower():
             if has_changes:
                 return "[green]🧹 Clean up this unused import [bold]before committing[/bold] to improve code clarity.[/green]"
 
             else:
                 return "[green]💡 Remove this unused import to clean up the namespace.[/green]"
-        
+
+        elif "unused variable" in issue.message.lower():
+            if has_changes:
+                return "[green]🧹 Remove this unused variable [bold]before committing[/bold] to clean up the namespace.[/green]"
+
+            else:
+                return "[green]💡 This variable is not used - consider removing it during code cleanup.[/green]"
+
+        elif "undefined variable" in issue.message.lower():
+            if has_changes:
+                return "[green]🔧 Define this variable or fix the typo [bold]before committing[/bold].[/green]"
+
+            else:
+                return "[green]💡 This variable is not defined - check for typos or missing imports.[/green]"
+
         elif "too complex" in issue.message.lower():
             if has_changes:
                 return "[green]🔧 This function is complex - consider simplifying [bold]before committing[/bold].[/green]"
