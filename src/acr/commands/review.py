@@ -238,28 +238,6 @@ def directory(
 
 
 @app.command()
-def branch(
-    base_branch: str = typer.Argument("main", help="[bold green]Base branch[/bold green] for comparison"),
-    repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
-    config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
-    output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
-    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
-) -> None:
-    """
-    [bold]Analyze branch differences[/bold] compared to base branch.
-    
-    [dim]Examples:[/dim]
-      [cyan]acr review branch main[/cyan]
-      [cyan]acr review branch develop /path/to/repo[/cyan]
-    """
-
-    # TODO: Implement branch comparison logic
-
-    console.print("⚠️ The command will be implemented in future versions. ⚠️")
-    console.print("There is no need to try to use it at [bold]this time[/bold].")
-
-
-@app.command()
 def staged(
     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
@@ -293,7 +271,7 @@ def staged(
 
         if config_path and config_path.exists():
             console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
-    
+
         else:
             console.print("⚙️  [dim]Using default configuration[/dim]")
 
@@ -333,3 +311,51 @@ def staged(
     except Exception as e:
         console.print(f"❌ [bold red]Error:[/bold red] {e}")
         raise typer.Exit(1)
+
+
+# TODO: Implement branch comparison logic
+
+# @app.command()
+# def branch(
+#     base_branch: str = typer.Argument("main", help="[bold green]Base branch[/bold green] for comparison"),
+#     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
+#     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
+#     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
+#     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+# ) -> None:
+#     """
+#     [bold]Analyze branch differences[/bold] compared to base branch.
+    
+#     [dim]Examples:[/dim]
+#       [cyan]acr review branch main[/cyan]
+#       [cyan]acr review branch develop /path/to/repo[/cyan]
+#     """
+
+#     try:
+#         target_path = Path(repo_path)
+#         config_path: Optional[Path] = None
+
+
+#         if config_file:
+#             config_path = Path(config_file)
+#             if not config_path.exists():
+#                 console.print(f"⚠️  [yellow]Config file not found: {config_path}, using defaults[/yellow]")
+#                 config_path = None
+
+#         else:
+#             config_path = find_config_file(target_path)
+
+#         config = load_config(config_path)
+#         config.strict = strict
+
+
+#         if config_path and config_path.exists():
+#             console.print(f"⚙️  [dim]Using config: {config_path}[/dim]")
+
+#         else:
+#             console.print("⚙️  [dim]Using default configuration[/dim]")
+
+
+#     except Exception as e:
+#         console.print(f"❌ [bold red]Error:[/bold red] {e}")
+#         raise typer.Exit(1)
