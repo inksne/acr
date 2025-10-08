@@ -7,7 +7,6 @@ from .git_utils import GitRepo
 from ..configuration import MAX_LINES_FUNCTION, MAX_COMPLEXITY
 
 
-
 class CodeAnalyzer:
     """Main code analyzer class with Git support."""
 
@@ -15,6 +14,7 @@ class CodeAnalyzer:
         self.config = config or ReviewConfig()
         self.git_repo = GitRepo()
 
+    # ==================== PUBLIC INTERFACE ====================
 
     def analyze_git_changes(self) -> list[CodeIssue]:
         """Analyze only changed files in Git repository."""
@@ -26,13 +26,11 @@ class CodeAnalyzer:
 
         all_changed_files = set(modified_files + staged_files + untracked_files)
 
-
         for file_path in all_changed_files:
             if file_path.suffix == '.py' and not self._should_ignore(file_path):
                 issues.extend(self.analyze_file(file_path))
 
         return issues
-
 
 
     def analyze_branch_diff(self, base_branch: str = "main") -> list[CodeIssue]:
@@ -44,7 +42,6 @@ class CodeAnalyzer:
             return issues
 
         # TODO: Implement branch comparison logic
-
         return issues
 
 
@@ -66,7 +63,7 @@ class CodeAnalyzer:
             issues.extend(self._check_complex_functions(tree, file_path))
             issues.extend(self._check_undefined_variables(tree, file_path))
             issues.extend(self._check_unused_variables(tree, file_path))
-
+            issues.extend(self._check_type_annotations(tree, file_path))
 
             # Add Git context to issues
             for issue in issues:
@@ -84,6 +81,18 @@ class CodeAnalyzer:
         return issues
 
 
+    def analyze_directory(self, directory_path: Path) -> list[CodeIssue]:
+        """Analyze all Python files in a directory."""
+        issues = []
+
+        for py_file in directory_path.rglob("*.py"):
+            if not self._should_ignore(py_file):
+                issues.extend(self.analyze_file(py_file))
+
+        return issues
+
+    # ==================== CORE ANALYSIS METHODS ====================
+
     def _check_magic_numbers(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
         """Check for magic numbers in code using AST."""
         issues: list[CodeIssue] = []
@@ -91,7 +100,6 @@ class CodeAnalyzer:
 
         if not magic_number_rule or not magic_number_rule.enabled:
             return issues
-
 
         ignored_numbers = {0, 1, -1, 100, 1000}
 
@@ -124,13 +132,11 @@ class CodeAnalyzer:
 
         max_lines = long_function_rule.parameters.get("max_lines", MAX_LINES_FUNCTION)
 
-
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 start_line = node.lineno
                 end_line = getattr(node, 'end_lineno', start_line)
                 function_length = end_line - start_line + 1
-
 
                 if function_length > max_lines:
                     issues.append(CodeIssue(
@@ -153,8 +159,8 @@ class CodeAnalyzer:
         if not unused_import_rule or not unused_import_rule.enabled:
             return issues
 
-
         imports: dict[str, tuple[int, str, str]] = {}
+
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
@@ -186,9 +192,309 @@ class CodeAnalyzer:
                     suggestion="[italic]Remove this unused import to clean up namespace.[/italic]"
                 ))
 
+        return issues
+
+
+    def _check_complex_functions(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for functions with high complexity."""
+        issues: list[CodeIssue] = []
+        
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                complexity = self._calculate_complexity(node)
+                
+                if complexity > MAX_COMPLEXITY:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=node.lineno,
+                        message=f"❌ Function [bold magenta]'{node.name}'[/bold magenta] is [bold yellow]too complex[/bold yellow] (complexity: [bold]{complexity}[/bold]).",
+                        severity=SeverityLevel.WARNING,
+                        rule_id="high_complexity",
+                        suggestion="[italic]Consider refactoring to reduce complexity (extract methods, simplify conditions).[/italic]"
+                    ))
 
         return issues
 
+
+    def _check_undefined_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for undefined variables using AST analysis."""
+        issues: list[CodeIssue] = []
+        undefined_rule = self.config.rules.get("undefined_variable")
+
+        if not undefined_rule or not undefined_rule.enabled:
+            return issues
+
+        defined_names = self._collect_defined_names(tree)
+        used_names = self._collect_used_names(tree)
+
+        for name, line in used_names:
+            if name not in defined_names and not self._is_builtin(name):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=line,
+                    message=f"❌ [bold red]Undefined variable:[/bold red] [bold]{name}[/bold]",
+                    severity=undefined_rule.severity,
+                    rule_id="undefined_variable",
+                    suggestion="[italic]Define this variable or check for typos.[/italic]"
+                ))
+
+        return issues
+
+
+    def _check_unused_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for variables that are defined but not used."""
+        issues: list[CodeIssue] = []
+        unused_rule = self.config.rules.get("unused_variable")
+        
+        if not unused_rule or not unused_rule.enabled:
+            return issues
+
+        used_variables = self._collect_used_variables(tree)
+        defined_variables = self._collect_defined_variables(tree)
+
+        for var_name, (line, var_type) in defined_variables.items():
+            if var_name not in used_variables and not self._should_ignore_variable(var_name, var_type):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=line,
+                    message=f"❌ [bold yellow]Unused variable:[/bold yellow] [bold]{var_name}[/bold] ({var_type})",
+                    severity=unused_rule.severity,
+                    rule_id="unused_variable",
+                    suggestion="[italic]Remove this unused variable to clean up the namespace.[/italic]"
+                ))
+
+        return issues
+
+
+    def _check_type_annotations(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for missing and incorrect type annotations."""
+        issues: list[CodeIssue] = []
+        issues.extend(self._check_missing_type_annotations(tree, file_path))
+        issues.extend(self._check_incorrect_type_annotations(tree, file_path))
+        return issues
+
+    # ==================== TYPE ANNOTATION CHECKS ====================
+
+    def _check_missing_type_annotations(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for missing type annotations in functions and methods."""
+        issues: list[CodeIssue] = []
+        missing_annotation_rule = self.config.rules.get("missing_type_annotation")
+        
+        if not missing_annotation_rule or not missing_annotation_rule.enabled:
+            return issues
+
+        type_annotations = self._collect_type_annotations(tree)
+
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                issues.extend(self._check_function_annotations(node, file_path))
+
+            elif isinstance(node, ast.Assign) and self._is_top_level(node):
+                issues.extend(self._check_variable_annotations(node, file_path, type_annotations))
+
+        return issues
+
+
+    def _check_incorrect_type_annotations(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for potentially incorrect type annotations."""
+        issues: list[CodeIssue] = []
+        incorrect_annotation_rule = self.config.rules.get("incorrect_type_annotation")
+        type_mismatch_rule = self.config.rules.get("type_mismatch")
+
+        if (not incorrect_annotation_rule or not incorrect_annotation_rule.enabled) and \
+           (not type_mismatch_rule or not type_mismatch_rule.enabled):
+            return issues
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and node.annotation:
+                issues.extend(self._check_single_annotation(node, file_path))
+                if type_mismatch_rule and type_mismatch_rule.enabled and node.value:
+                    issues.extend(self._check_type_mismatch(node, file_path))
+
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for arg in node.args.args:
+                    if arg.annotation:
+                        issues.extend(self._check_single_annotation(arg, file_path, is_argument=True))
+
+                if node.returns:
+                    issues.extend(self._check_single_annotation(node, file_path, is_return=True))
+                    if type_mismatch_rule and type_mismatch_rule.enabled:
+                        issues.extend(self._check_return_type_mismatch(node, file_path))
+
+        return issues
+
+
+    def _check_function_annotations(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: Path) -> list[CodeIssue]:
+        """Check type annotations for a function."""
+        issues: list[CodeIssue] = []
+
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return issues
+
+
+        for arg in func_node.args.args:
+            if not arg.annotation:
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=arg.lineno,
+                    message=f"❌ [bold yellow]Missing type annotation for parameter:[/bold yellow] [bold]{arg.arg}[/bold]",
+                    severity=SeverityLevel.INFO,
+                    rule_id="missing_type_annotation",
+                    suggestion="[italic]Add type annotation to improve code clarity and enable static checking.[/italic]"
+                ))
+
+
+        if not func_node.returns:
+            issues.append(CodeIssue(
+                file=file_path,
+                line=func_node.lineno,
+                message=f"❌ [bold yellow]Missing return type annotation for function:[/bold yellow] [bold]{func_node.name}[/bold]",
+                severity=SeverityLevel.INFO,
+                rule_id="missing_type_annotation",
+                suggestion="[italic]Add return type annotation to document function behavior.[/italic]"
+            ))
+
+        return issues
+
+
+    def _check_variable_annotations(
+        self,
+        assign_node: ast.Assign,
+        file_path: Path,
+        type_annotations: dict[str, ast.AnnAssign]
+    ) -> list[CodeIssue]:
+        """Check for missing type annotations in module-level variables."""
+        issues: list[CodeIssue] = []
+
+        for target in assign_node.targets:
+            if isinstance(target, ast.Name):
+                var_name = target.id
+
+                if self._should_ignore_variable_name(var_name):
+                    continue
+
+                if var_name not in type_annotations:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=target.lineno,
+                        message=f"❌ [bold yellow]Missing type annotation for variable:[/bold yellow] [bold]{var_name}[/bold]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="missing_type_annotation",
+                        suggestion="[italic]Consider adding type annotation for important module-level variables.[/italic]"
+                    ))
+
+        return issues
+
+
+    def _check_single_annotation(
+        self,
+        node: ast.AST,
+        file_path: Path,
+        is_argument: bool = False,
+        is_return: bool = False
+    ) -> list[CodeIssue]:
+        """Check a single type annotation for potential issues."""
+        issues: list[CodeIssue] = []
+        
+        if is_return:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotation_node = node.returns
+                context = f"return type of '{node.name}'"
+
+            else:
+                return issues
+
+        elif is_argument and isinstance(node, ast.arg):
+            annotation_node = node.annotation
+            context = f"parameter '{node.arg}'"
+
+        elif isinstance(node, ast.AnnAssign):
+            annotation_node = node.annotation
+            target_name = node.target.id if isinstance(node.target, ast.Name) else "variable"
+            context = f"variable '{target_name}'"
+
+        else:
+            return issues
+
+
+        if not annotation_node:
+            return issues
+
+
+        if self._is_any_annotation(annotation_node):
+            issues.append(CodeIssue(
+                file=file_path,
+                line=annotation_node.lineno,
+                message=f"❌ [bold yellow]Use of 'Any' type for {context}[/bold yellow]",
+                severity=SeverityLevel.INFO,
+                rule_id="incorrect_type_annotation",
+                suggestion="[italic]Avoid using 'Any' when possible. Use more specific types for better type safety.[/italic]"
+            ))
+
+
+        if self._is_object_annotation(annotation_node):
+            issues.append(CodeIssue(
+                file=file_path,
+                line=annotation_node.lineno,
+                message=f"❌ [bold yellow]Use of generic 'object' type for {context}[/bold yellow]",
+                severity=SeverityLevel.INFO,
+                rule_id="incorrect_type_annotation", 
+                suggestion="[italic]Consider using more specific types instead of generic 'object'.[/italic]"
+            ))
+
+        return issues
+
+
+    def _check_type_mismatch(self, ann_assign_node: ast.AnnAssign, file_path: Path) -> list[CodeIssue]:
+        """Check if annotated type matches the assigned value."""
+        issues: list[CodeIssue] = []
+
+        if not isinstance(ann_assign_node.target, ast.Name):
+            return issues
+
+        var_name = ann_assign_node.target.id
+        annotation_type = self._annotation_to_string(ann_assign_node.annotation)
+        value_type = self._value_to_type_string(ann_assign_node.value)
+
+        if value_type and annotation_type and not self._types_are_compatible(annotation_type, value_type):
+            issues.append(CodeIssue(
+                file=file_path,
+                line=ann_assign_node.lineno,
+                message=f"❌ [bold yellow]Type mismatch:[/bold yellow] [bold]{var_name}[/bold] is annotated as [yellow]{annotation_type}[/yellow] but assigned [red]{value_type}[/red]",
+                severity=SeverityLevel.INFO,
+                rule_id="type_mismatch",
+                suggestion="[italic]Fix the type annotation or the assigned value to resolve the type conflict.[/italic]"
+            ))
+
+        return issues
+
+
+    def _check_return_type_mismatch(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: Path) -> list[CodeIssue]:
+        """Check if function return type matches the actual returned values."""
+        issues: list[CodeIssue] = []
+
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not func_node.returns:
+            return issues
+
+        return_annotation = self._annotation_to_string(func_node.returns)
+        return_types = self._get_function_return_types(func_node)
+
+        for return_type in return_types:
+            if return_type and return_annotation and not self._types_are_compatible(return_annotation, return_type):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=func_node.lineno,
+                    message=f"❌ [bold yellow]Return type mismatch:[/bold yellow] Function [bold]{func_node.name}[/bold] returns [red]{return_type}[/red] but annotated as [yellow]{return_annotation}[/yellow]",
+                    severity=SeverityLevel.INFO,
+                    rule_id="type_mismatch",
+                    suggestion="[italic]Fix the return type annotation or the returned values to resolve the type conflict.[/italic]"
+                ))
+                break  # One error per function is enough
+
+        return issues
+
+    # ==================== HELPER METHODS (USED BY OTHERS) ====================
 
     def _collect_defined_names(self, tree: ast.AST) -> set[str]:
         """Collect all defined names (variables, functions, imports, etc.)."""
@@ -237,39 +543,6 @@ class CodeAnalyzer:
         return used_names
 
 
-    def _is_builtin(self, name: str) -> bool:
-        """Check if name is a Python builtin."""
-        import builtins
-        return hasattr(builtins, name)
-
-
-    def _check_undefined_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
-        """Check for undefined variables using AST analysis."""
-        issues: list[CodeIssue] = []
-        undefined_rule = self.config.rules.get("undefined_variable")
-
-        if not undefined_rule or not undefined_rule.enabled:
-            return issues
-
-
-        defined_names = self._collect_defined_names(tree)
-
-        used_names = self._collect_used_names(tree)
-
-        for name, line in used_names:
-            if name not in defined_names and not self._is_builtin(name):
-                issues.append(CodeIssue(
-                    file=file_path,
-                    line=line,
-                    message=f"❌ [bold red]Undefined variable:[/bold red] [bold]{name}[/bold]",
-                    severity=undefined_rule.severity,
-                    rule_id="undefined_variable",
-                    suggestion="[italic]Define this variable or check for typos.[/italic]"
-                ))
-
-        return issues
-
-
     def _collect_used_variables(self, tree: ast.AST) -> set[str]:
         """Collect all variable names that are used (read from)."""
         used_vars = set()
@@ -281,31 +554,6 @@ class CodeAnalyzer:
                     used_vars.add(node.id)
 
         return used_vars
-
-
-    def _process_function_arguments(self, func_node: ast.AST, defined_vars: dict[str, tuple[int, str]]) -> None:
-        """Process function arguments and add them to defined_vars."""
-        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return
-
-        args = func_node.args
-        lineno = func_node.lineno
-
-
-        for arg in args.args:
-            defined_vars[arg.arg] = (lineno, "function parameter")
-
-        # *args
-        if args.vararg:
-            defined_vars[args.vararg.arg] = (lineno, "*args parameter")
-
-        # **kwargs
-        if args.kwarg:
-            defined_vars[args.kwarg.arg] = (lineno, "**kwargs parameter")
-
-        # keyword-only
-        for kwarg in args.kwonlyargs:
-            defined_vars[kwarg.arg] = (lineno, "keyword-only parameter")
 
 
     def _collect_defined_variables(self, tree: ast.AST) -> dict[str, tuple[int, str]]:
@@ -327,6 +575,47 @@ class CodeAnalyzer:
         return defined_vars
 
 
+    def _collect_type_annotations(self, tree: ast.AST) -> dict[str, ast.AnnAssign]:
+        """Collect all type annotations from the module."""
+        annotations = {}
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                annotations[node.target.id] = node
+
+        return annotations
+
+    def _process_function_arguments(self, func_node: ast.AST, defined_vars: dict[str, tuple[int, str]]) -> None:
+        """Process function arguments and add them to defined_vars."""
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return
+
+        args = func_node.args
+        lineno = func_node.lineno
+
+        for arg in args.args:
+            defined_vars[arg.arg] = (lineno, "function parameter")
+
+        # *args
+        if args.vararg:
+            defined_vars[args.vararg.arg] = (lineno, "*args parameter")
+
+        # **kwargs
+        if args.kwarg:
+            defined_vars[args.kwarg.arg] = (lineno, "**kwargs parameter")
+
+        # keyword-only
+        for kwarg in args.kwonlyargs:
+            defined_vars[kwarg.arg] = (lineno, "keyword-only parameter")
+
+    # ==================== UTILITY METHODS ====================
+
+    def _is_builtin(self, name: str) -> bool:
+        """Check if name is a Python builtin."""
+        import builtins
+        return hasattr(builtins, name)
+
+
     def _should_ignore_variable(self, var_name: str, var_type: str) -> bool:
         """Determine if a variable should be ignored from unused checks."""
         if var_name.startswith('_'):
@@ -340,60 +629,34 @@ class CodeAnalyzer:
                 return True
 
         ignored_names = {
-            'self', 'cls',
-            'mcs',  # meta classes
-            'args', 'kwargs',
-            'config', 'settings',  # config variables
+            'self', 'cls', 'mcs', 'args', 'kwargs', 'config', 'settings'
         }
 
         return var_name in ignored_names
 
 
-    def _check_unused_variables(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
-        """Check for variables that are defined but not used."""
-        issues: list[CodeIssue] = []
-        unused_rule = self.config.rules.get("unused_variable")
-        
-        if not unused_rule or not unused_rule.enabled:
-            return issues
+    def _should_ignore_variable_name(self, var_name: str) -> bool:
+        """Check if variable name should be ignored for type annotation checks."""
+        if var_name.startswith('_'):
+            return True
 
-        used_variables = self._collect_used_variables(tree)
+        ignored_names = {
+            '__name__', '__file__', '__doc__', '__package__',
+            '__version__', '__author__', '__all__'
+        }
 
-        defined_variables = self._collect_defined_variables(tree)
-
-        for var_name, (line, var_type) in defined_variables.items():
-            if var_name not in used_variables and not self._should_ignore_variable(var_name, var_type):
-                issues.append(CodeIssue(
-                    file=file_path,
-                    line=line,
-                    message=f"❌ [bold yellow]Unused variable:[/bold yellow] [bold]{var_name}[/bold] ({var_type})",
-                    severity=unused_rule.severity,
-                    rule_id="unused_variable",
-                    suggestion="[italic]Remove this unused variable to clean up the namespace.[/italic]"
-                ))
-
-        return issues
+        return var_name in ignored_names
 
 
-    def _check_complex_functions(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
-        """Check for functions with high complexity."""
-        issues = []
-        
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                complexity = self._calculate_complexity(node)
-                
-                if complexity > MAX_COMPLEXITY:  # McCabe complexity threshold
-                    issues.append(CodeIssue(
-                        file=file_path,
-                        line=node.lineno,
-                        message=f"❌ Function [bold magenta]'{node.name}'[/bold magenta] is [bold yellow]too complex[/bold yellow] (complexity: [bold]{complexity}[/bold]).",
-                        severity=SeverityLevel.WARNING,
-                        rule_id="high_complexity",
-                        suggestion="[italic]Consider refactoring to reduce complexity (extract methods, simplify conditions).[/italic]"
-                    ))
+    def _is_top_level(self, node: ast.AST) -> bool:
+        """Check if node is at module level (not inside function/class)."""
+        current = node
+        while hasattr(current, 'parent'):
+            current = current.parent
+            if isinstance(current, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+                return False
 
-        return issues
+        return True
 
 
     def _calculate_complexity(self, node: ast.AST) -> int:
@@ -402,7 +665,8 @@ class CodeAnalyzer:
 
         for child in ast.walk(node):
             if isinstance(child, (
-                ast.If, ast.While, ast.For, ast.AsyncFor, ast.Try, ast.ExceptHandler, ast.With, ast.AsyncWith
+                ast.If, ast.While, ast.For, ast.AsyncFor, ast.Try, 
+                ast.ExceptHandler, ast.With, ast.AsyncWith
             )):
                 complexity += 1
 
@@ -412,9 +676,165 @@ class CodeAnalyzer:
         return complexity
 
 
+    def _should_ignore(self, file_path: Path) -> bool:
+        """Check if file should be ignored based on patterns."""
+        file_path_str = str(file_path)
+
+        for pattern in self.config.ignore_patterns:
+            if Path(file_path_str).match(pattern):
+                return True
+
+        for exclude_path in self.config.exclude_paths:
+            if exclude_path in file_path_str:
+                return True
+
+        return False
+
+    # ==================== TYPE ANNOTATION UTILITIES ====================
+
+    def _annotation_to_string(self, annotation_node: ast.AST) -> str:
+        """Convert annotation AST node to string representation."""
+        if annotation_node is None:
+            return "unknown"
+
+        if isinstance(annotation_node, ast.Name):
+            return getattr(annotation_node, 'id', 'unknown')
+
+        elif isinstance(annotation_node, ast.Attribute):
+            value = getattr(annotation_node, 'value', None)
+            attr = getattr(annotation_node, 'attr', 'unknown')
+
+            if value is not None:
+                value_str = self._annotation_to_string(value)
+                return f"{value_str}.{attr}"
+
+            return attr
+
+        elif isinstance(annotation_node, ast.Subscript):
+            value = getattr(annotation_node, 'value', None)
+
+            if value is not None:
+                base = self._annotation_to_string(value)
+                return f"{base}[...]"
+
+            return "unknown"
+
+        elif isinstance(annotation_node, ast.Constant):
+            value = getattr(annotation_node, 'value', None)
+            if isinstance(value, str):
+                return value
+
+        return "unknown"
+
+
+    def _value_to_type_string(self, value_node: Optional[ast.AST]) -> str:
+        """Determine type string from value AST node."""
+        if value_node is None:
+            return "unknown"
+
+
+        if isinstance(value_node, ast.Constant):
+            if value_node.value is None:
+                return "None"
+
+            elif isinstance(value_node.value, str):
+                return "str"
+
+            elif isinstance(value_node.value, int):
+                return "int"
+
+            elif isinstance(value_node.value, float):
+                return "float"
+
+            elif isinstance(value_node.value, bool):
+                return "bool"
+
+            elif isinstance(value_node.value, bytes):
+                return "bytes"
+
+
+        elif isinstance(value_node, ast.List) or isinstance(value_node, ast.ListComp):
+            return "list"
+
+        elif isinstance(value_node, ast.Dict) or isinstance(value_node, ast.DictComp):
+            return "dict"
+
+        elif isinstance(value_node, ast.Set) or isinstance(value_node, ast.SetComp):
+            return "set"
+
+        elif isinstance(value_node, ast.Tuple):
+            return "tuple"
+
+        elif isinstance(value_node, ast.Call):
+            if isinstance(value_node.func, ast.Name):
+                return value_node.func.id
+
+            elif isinstance(value_node.func, ast.Attribute):
+                return value_node.func.attr
+
+        return "unknown"
+
+
+    def _get_function_return_types(self, func_node: ast.AST) -> set[str]:
+        """Get the types of values returned by a function."""
+        return_types = set()
+        
+        for node in ast.walk(func_node):
+            if isinstance(node, ast.Return) and node.value is not None:
+                return_types.add(self._value_to_type_string(node.value))
+
+        return return_types
+
+
+    def _types_are_compatible(self, annotated_type: str, actual_type: str) -> bool:
+        """Check if types are compatible (simplified check)."""
+        compatibility_map = {
+            "str": {"str"},
+            "int": {"int", "float"},
+            "float": {"float", "int"},
+            "bool": {"bool"},
+            "list": {"list"},
+            "dict": {"dict"},
+            "set": {"set"},
+            "tuple": {"tuple"},
+            "None": {"None"},
+        }
+
+        if annotated_type == actual_type:
+            return True
+
+        compatible_types = compatibility_map.get(annotated_type, set())
+        return actual_type in compatible_types
+
+
+    def _is_any_annotation(self, annotation_node: ast.AST) -> bool:
+        """Check if annotation is typing.Any."""
+        if isinstance(annotation_node, ast.Name) and annotation_node.id == 'Any':
+            return True
+
+        elif (isinstance(annotation_node, ast.Attribute) and 
+            isinstance(annotation_node.value, ast.Name) and
+            annotation_node.value.id == 'typing' and
+            annotation_node.attr == 'Any'):
+
+            return True
+
+        return False
+
+
+    def _is_object_annotation(self, annotation_node: ast.AST) -> bool:
+        """Check if annotation is plain object."""
+        return (isinstance(annotation_node, ast.Name) and annotation_node.id == 'object')
+
+
+    def _is_string_annotation(self, annotation_node: ast.AST) -> bool:
+        """Check if annotation is a string (forward reference)."""
+        return isinstance(annotation_node, ast.Constant) and isinstance(annotation_node.value, str)
+
+    # ==================== OUTPUT FORMATTING ====================
+
     def _get_git_aware_suggestion(self, issue: CodeIssue, file_diff: str) -> str:
         """Generate context-aware suggestions based on Git diff."""
-
         has_changes = bool(file_diff.strip())
 
         if "magic number" in issue.message.lower():
@@ -459,34 +879,36 @@ class CodeAnalyzer:
             else:
                 return "[green]💡 This function has high complexity - good candidate for future refactoring.[/green]"
 
+        elif "missing type annotation" in issue.message.lower():
+            if has_changes:
+                return "[green]📝 Add type annotation [bold]before committing[/bold] to improve code documentation.[/green]"
+
+            else:
+                return "[green]💡 Add type annotation to improve code clarity and enable better static analysis.[/green]"
+
+        elif "use of 'any' type" in issue.message.lower():
+            if has_changes:
+                return "[green]🔧 Replace 'Any' with specific type [bold]before committing[/bold] for better type safety.[/green]"
+
+            else:
+                return "[green]💡 Consider replacing 'Any' with more specific types where possible.[/green]"
+
+        elif "use of generic 'object' type" in issue.message.lower():
+            if has_changes:
+                return "[green]🔧 Use more specific type instead of 'object' [bold]before committing[/bold].[/green]"
+
+            else:
+                return "[green]💡 Generic 'object' type provides little type information - consider more specific types.[/green]"
+
+        elif "type mismatch" in issue.message.lower():
+            if has_changes:
+                return "[green]🔧 Fix type annotation or value [bold]before committing[/bold] to resolve type conflict.[/green]"
+
+            else:
+                return "[green]💡 The type annotation doesn't match the actual value - fix this type conflict.[/green]"
+
         if has_changes:
             return "[blue]📝 Review this code [bold]before committing[/bold] to ensure quality.[/blue]"
 
         else:
             return "[blue]👀 This code could benefit from review and improvement.[/blue]"
-
-
-    def _should_ignore(self, file_path: Path) -> bool:
-        """Check if file should be ignored based on patterns."""
-        file_path_str = str(file_path)
-
-        for pattern in self.config.ignore_patterns:
-            if Path(file_path_str).match(pattern):
-                return True
-
-        for exclude_path in self.config.exclude_paths:
-            if exclude_path in file_path_str:
-                return True
-
-        return False
-
-
-    def analyze_directory(self, directory_path: Path) -> list[CodeIssue]:
-        """Analyze all Python files in a directory."""
-        issues = []
-
-        for py_file in directory_path.rglob("*.py"):
-            if not self._should_ignore(py_file):
-                issues.extend(self.analyze_file(py_file))
-
-        return issues

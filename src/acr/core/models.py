@@ -54,7 +54,7 @@ class Rule:
     name: str
     description: str
     enabled: bool = True
-    severity: SeverityLevel = SeverityLevel.WARNING
+    severity: SeverityLevel = SeverityLevel.INFO
     parameters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -136,6 +136,27 @@ class ReviewConfig:
                 description="Identify functions with high cyclomatic complexity",
                 severity=SeverityLevel.WARNING,
                 parameters={"max_complexity": MAX_COMPLEXITY}
+            ),
+
+            "missing_type_annotation": Rule(
+                id="missing_type_annotation",
+                name="Missing Type Annotation",
+                description="Find functions and methods missing type annotations",
+                severity=SeverityLevel.INFO
+            ),
+
+            "incorrect_type_annotation": Rule(
+                id="incorrect_type_annotation",
+                name="Incorrect Type Annotation", 
+                description="Find potentially incorrect type annotations",
+                severity=SeverityLevel.INFO
+            ),
+
+            "type_mismatch": Rule(
+                id="type_mismatch",
+                name="Type Mismatch Detection",
+                description="Find type annotations that don't match the actual value",
+                severity=SeverityLevel.INFO
             ),
         }
 
