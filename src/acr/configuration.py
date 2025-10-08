@@ -1,7 +1,7 @@
 from typing import Final
 
 
-APP_VERSION: Final[str] = '0.1.2'
+APP_VERSION: Final[str] = '0.1.5'
 
 MAX_LINES_FUNCTION: Final[int] = 50
 MAX_COMPLEXITY: Final[int] = 10
