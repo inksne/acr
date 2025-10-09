@@ -5,6 +5,8 @@ APP_VERSION: Final[str] = '0.1.5'
 
 MAX_LINES_FUNCTION: Final[int] = 50
 MAX_COMPLEXITY: Final[int] = 10
+MAX_LINE_LENGTH_PEP8: Final[int] = 79
+MAX_BLANK_LINES: Final[int] = 2
 
 DEFAULT_MAX_LINE_LENGTH: Final[int] = 100
 DEFAULT_OUTPUT_FORMAT: Final[str] = 'text'
