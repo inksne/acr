@@ -4,7 +4,7 @@ from typing import Optional
 
 from .models import CodeIssue, ReviewConfig, SeverityLevel
 from .git_utils import GitRepo
-from ..configuration import MAX_LINES_FUNCTION, MAX_COMPLEXITY
+from ..configuration import MAX_LINES_FUNCTION, MAX_COMPLEXITY, MAX_LINE_LENGTH_PEP8, MAX_BLANK_LINES
 
 
 class CodeAnalyzer:
@@ -64,6 +64,7 @@ class CodeAnalyzer:
             issues.extend(self._check_undefined_variables(tree, file_path))
             issues.extend(self._check_unused_variables(tree, file_path))
             issues.extend(self._check_type_annotations(tree, file_path))
+            issues.extend(self._check_pep8(tree, file_path))
 
             # Add Git context to issues
             for issue in issues:
@@ -164,9 +165,9 @@ class CodeAnalyzer:
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    actual_name = alias.asname or alias.name
-                    imports[actual_name] = (node.lineno, alias.name, alias.asname or "")
+                for alias_node in node.names:
+                    actual_name = alias_node.asname or alias_node.name
+                    imports[actual_name] = (node.lineno, alias_node.name, alias_node.asname or "")
 
 
         used_names: set[str] = set()
@@ -271,6 +272,33 @@ class CodeAnalyzer:
         issues: list[CodeIssue] = []
         issues.extend(self._check_missing_type_annotations(tree, file_path))
         issues.extend(self._check_incorrect_type_annotations(tree, file_path))
+        return issues
+
+
+    def _check_pep8(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check for PEP 8 style guide violations."""
+        issues: list[CodeIssue] = []
+        pep8_rule = self.config.rules.get("pep8")
+        
+        if not pep8_rule or not pep8_rule.enabled:
+            return issues
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        except Exception:
+            return issues
+
+
+        issues.extend(self._check_line_length(lines, file_path))
+        issues.extend(self._check_blank_lines(lines, file_path))
+        issues.extend(self._check_import_order(tree, file_path))
+        issues.extend(self._check_naming_conventions(tree, file_path))
+        issues.extend(self._check_whitespace(tree))
+        issues.extend(self._check_trailing_whitespace(lines, file_path))
+
+
         return issues
 
     # ==================== TYPE ANNOTATION CHECKS ====================
@@ -493,6 +521,236 @@ class CodeAnalyzer:
                 break  # One error per function is enough
 
         return issues
+
+    # ==================== PEP 8 CHECKS ====================
+
+    def _check_line_length(self, lines: list[str], file_path: Path) -> list[CodeIssue]:
+        """Check if lines exceed maximum length (PEP 8: 79 characters)."""
+        issues: list[CodeIssue] = []
+
+        for i, line in enumerate(lines, 1):
+            line_no_newline = line.rstrip('\r\n')
+            if len(line_no_newline) > MAX_LINE_LENGTH_PEP8:
+                if not any(x in line_no_newline for x in ['http://', 'https://', 'pragma:', 'type:']):
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=i,
+                        message=f"❌ [bold yellow]Line too long ({len(line_no_newline)} > {MAX_LINE_LENGTH_PEP8} characters)[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Break long lines to improve readability.[/italic]"
+                    ))
+
+        return issues
+
+
+    def _check_blank_lines(self, lines: list[str], file_path: Path) -> list[CodeIssue]:
+        """Check for proper blank line usage (PEP 8)."""
+        issues: list[CodeIssue] = []
+        blank_line_count = 0
+
+        for i, line in enumerate(lines, 1):
+            stripped_line = line.rstrip()
+            if not stripped_line:
+                blank_line_count += 1
+                if blank_line_count > MAX_BLANK_LINES:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=i,
+                        message="❌ [bold yellow]Too many blank lines[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Use maximum 2 blank lines between top-level definitions.[/italic]"
+                    ))
+
+            else:
+                blank_line_count = 0
+
+
+        return issues
+
+
+    def _check_import_order(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check import order (PEP 8: stdlib, third-party, local)."""
+        issues: list[CodeIssue] = []
+        imports: list[tuple[int, str, str]] = []  # (line, module, type)
+
+        stdlib_modules = {'sys', 'os', 'json', 'datetime', 'collections', 'pathlib', 'typing'}
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append((node.lineno, alias.name, "import"))
+
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imports.append((node.lineno, node.module, "from"))
+
+        stdlib_imports = []
+        third_party_imports = []
+        local_imports = []
+
+        for lineno, module, import_type in imports:
+            if any(module.startswith(stdlib) for stdlib in stdlib_modules) or module in stdlib_modules:
+                stdlib_imports.append((lineno, module, import_type))
+
+            elif '.' in module and not module.startswith('.'):
+                third_party_imports.append((lineno, module, import_type))
+
+            else:
+                local_imports.append((lineno, module, import_type))
+
+        current_section = "stdlib"
+        
+        for lineno, module, import_type in imports:
+            if module in [m for _, m, _ in stdlib_imports]:
+                if current_section != "stdlib":
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=lineno,
+                        message=f"❌ [bold yellow]Import order violation: {module}[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Standard library imports should come first, then third-party, then local imports.[/italic]"
+                    ))
+
+                current_section = "stdlib"
+
+            elif module in [m for _, m, _ in third_party_imports]:
+                if current_section == "local":
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=lineno,
+                        message=f"❌ [bold yellow]Import order violation: {module}[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Third-party imports should come after standard library imports.[/italic]"
+                    ))
+
+                current_section = "third_party"
+
+            else:
+                current_section = "local"
+
+
+        return issues
+
+
+    def _check_naming_conventions(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Check naming conventions (PEP 8)."""
+        issues: list[CodeIssue] = []
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                if not self._is_camel_case(node.name):
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=node.lineno,
+                        message=f"❌ [bold yellow]Class name should be in CamelCase: {node.name}[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Use CamelCase for class names (e.g., MyClass).[/italic]"
+                    ))
+
+
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not self._is_snake_case(node.name):
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=node.lineno,
+                        message=f"❌ [bold yellow]Function name should be in snake_case: {node.name}[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep8",
+                        suggestion="[italic]Use snake_case for function and variable names (e.g., my_function).[/italic]"
+                    ))
+
+
+            elif isinstance(node, ast.Assign):
+                if (len(node.targets) == 1 and 
+                    isinstance(node.targets[0], ast.Name) and
+                    self._is_constant_name(node.targets[0].id)):
+                    
+                    if not node.targets[0].id.isupper():
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=node.lineno,
+                            message=f"❌ [bold yellow]Constant should be in UPPER_CASE: {node.targets[0].id}[/bold yellow]",
+                            severity=SeverityLevel.INFO,
+                            rule_id="pep8",
+                            suggestion="[italic]Use UPPER_CASE for constants (e.g., MAX_VALUE).[/italic]"
+                        ))
+
+        return issues
+
+
+    def _check_whitespace(self, tree: ast.AST) -> list[CodeIssue]:
+        """Check for proper whitespace usage (PEP 8)."""
+        issues: list[CodeIssue] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp):
+                pass
+
+
+            if isinstance(node, ast.Call):
+                if node.args and len(node.args) > 1:
+                    pass
+
+        return issues
+
+
+    def _check_trailing_whitespace(self, lines: list[str], file_path: Path) -> list[CodeIssue]:
+        """Check for trailing whitespace (spaces or tabs before newline)."""
+        issues: list[CodeIssue] = []
+
+        for i, line in enumerate(lines, 1):
+            line_no_newline = line.rstrip('\r\n')
+
+            # if a string without a newline is different from a string without a newline and without spaces,
+            # means there are spaces/tabs at the end (i.e. trailing whitespaces)
+
+            if line_no_newline != line_no_newline.rstrip(' \t'):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=i,
+                    message="❌ [bold yellow]Trailing whitespace[/bold yellow]",
+                    severity=SeverityLevel.INFO,
+                    rule_id="pep8",
+                    suggestion="[italic]Remove trailing whitespace.[/italic]"
+                ))
+
+        return issues
+
+
+    def _is_snake_case(self, name: str) -> bool:
+        """Check if name is in snake_case."""
+        if not name:
+            return False
+
+        if name.startswith('__') and name.endswith('__'):
+            return True
+
+        if name.startswith('_'):
+            name = name[1:]
+
+        return all(c.islower() or c.isdigit() or c == '_' for c in name)
+
+
+    def _is_camel_case(self, name: str) -> bool:
+        """Check if name is in CamelCase."""
+        if not name:
+            return False
+
+        if name.startswith('_'):
+            name = name[1:]
+
+        return name[0].isupper() and '_' not in name
+
+    def _is_constant_name(self, name: str) -> bool:
+        """Check if variable name suggests it should be a constant."""
+        constant_indicators = {'MAX', 'MIN', 'DEFAULT', 'CONFIG', 'SETTINGS', 'CONSTANT'}
+
+        return any(indicator in name.upper() for indicator in constant_indicators)
 
     # ==================== HELPER METHODS (USED BY OTHERS) ====================
 
@@ -837,6 +1095,7 @@ class CodeAnalyzer:
         """Generate context-aware suggestions based on Git diff."""
         has_changes = bool(file_diff.strip())
 
+
         if "magic number" in issue.message.lower():
             if has_changes:
                 return "[green]🔧 Consider extracting this magic number to a named constant [bold]before committing[/bold].[/green]"
@@ -906,6 +1165,57 @@ class CodeAnalyzer:
 
             else:
                 return "[green]💡 The type annotation doesn't match the actual value - fix this type conflict.[/green]"
+
+        elif issue.rule_id and "pep8" in issue.rule_id:
+            if "line too long" in issue.message.lower():
+                if has_changes:
+                    return "[green]📏 Break long line [bold]before committing[/bold] to improve readability.[/green]"
+
+                else:
+                    return "[green]💡 Break long lines to comply with PEP 8 (79 characters).[/green]"
+
+            elif "blank lines" in issue.message.lower():
+                if has_changes:
+                    return "[green]📝 Fix blank lines [bold]before committing[/bold] to follow PEP 8.[/green]"
+
+                else:
+                    return "[green]💡 Use proper blank line spacing (max 2 lines between top-level definitions).[/green]"
+
+            elif "import order" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Reorder imports [bold]before committing[/bold] (stdlib → third-party → local).[/green]"
+
+                else:
+                    return "[green]💡 Reorder imports: standard library → third-party → local imports.[/green]"
+
+            elif "should be in" in issue.message.lower():
+                if has_changes:
+                    return "[green]✏️ Fix naming [bold]before committing[/bold] to follow PEP 8 conventions.[/green]"
+
+                else:
+                    return "[green]💡 Follow PEP 8 naming conventions (snake_case, CamelCase, UPPER_CASE).[/green]"
+
+            elif "trailing whitespace" in issue.message.lower():
+                if has_changes:
+                    return "[green]🧹 Remove trailing whitespace [bold]before committing[/bold].[/green]"
+
+                else:
+                    return "[green]💡 Remove trailing whitespace for cleaner code.[/green]"
+
+            elif "function arguments" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Refactor function [bold]before committing[/bold] to reduce arguments.[/green]"
+
+                else:
+                    return "[green]💡 Consider refactoring function with too many arguments.[/green]"
+
+            else:
+                if has_changes:
+                    return "[green]📝 Fix PEP 8 issue [bold]before committing[/bold] to improve code style.[/green]"
+
+                else:
+                    return "[green]💡 Fix this PEP 8 style guide violation.[/green]"
+
 
         if has_changes:
             return "[blue]📝 Review this code [bold]before committing[/bold] to ensure quality.[/blue]"

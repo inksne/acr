@@ -158,6 +158,13 @@ class ReviewConfig:
                 description="Find type annotations that don't match the actual value",
                 severity=SeverityLevel.INFO
             ),
+
+            "pep8": Rule(
+                id="pep8",
+                name="PEP 8 Style Guide",
+                description="Check code for PEP 8 style guide violations",
+                severity=SeverityLevel.INFO
+            ),
         }
 
 
