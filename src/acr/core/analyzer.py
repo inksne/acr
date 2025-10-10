@@ -51,10 +51,10 @@ class CodeAnalyzer:
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
+                lines = f.readlines()
 
             file_diff = self.git_repo.get_diff_for_file(file_path)
-            tree = ast.parse(content, filename=str(file_path))
+            tree = ast.parse("".join(lines), filename=str(file_path))
 
 
             issues.extend(self._check_magic_numbers(tree, file_path))
@@ -66,6 +66,7 @@ class CodeAnalyzer:
             issues.extend(self._check_type_annotations(tree, file_path))
             issues.extend(self._check_pep8(tree, file_path))
             issues.extend(self._check_inline_comments(file_path))
+            issues.extend(self._check_pep257_docstrings(tree, file_path, lines))
 
             # Add Git context to issues
             for issue in issues:
@@ -762,6 +763,7 @@ class CodeAnalyzer:
         """
         issues: list[CodeIssue] = []
         pep8_rule = self.config.rules.get("pep8")
+
         if not pep8_rule or not pep8_rule.enabled:
             return issues
 
@@ -812,6 +814,92 @@ class CodeAnalyzer:
 
         except Exception:
             return issues
+
+        return issues
+
+
+    def _check_pep257_docstrings(self, tree: ast.AST, file_path: Path, lines: list[str]) -> list[CodeIssue]:
+        """
+        PEP 257: Check multi-line docstrings formatting.
+        - Closing triple quotes must be on their own line.
+        - Prefer (soft recommendation) having an empty line before the closing quotes.
+        """
+        issues: list[CodeIssue] = []
+        pep8_rule = self.config.rules.get("pep8")
+
+        if not pep8_rule or not pep8_rule.enabled:
+            return issues
+
+        def _check_docnode(docnode: ast.Expr) -> None:
+            # docnode.value is ast.Constant (string)
+            val = getattr(docnode, "value", None)
+            if val is None:
+                return
+
+
+            if not (isinstance(val, ast.Constant) and isinstance(val.value, str)):
+                return
+
+            start = getattr(val, "lineno", None)
+            end = getattr(val, "end_lineno", None) or start
+
+            # single-line docstring -> skip
+            if start is None or end is None or end == start:
+                return
+
+            try:
+                last_line: str = lines[end - 1].rstrip('\r\n')
+
+            except Exception:
+                last_line: str = ""
+
+            stripped_last = last_line.strip()
+
+            if stripped_last not in ('"""', "'''"):
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=end,
+                    message="❌ [bold yellow]Docstring closing quotes should be on a separate line[/bold yellow]",
+                    severity=SeverityLevel.INFO,
+                    rule_id="pep257",
+                    suggestion="[italic]Put the closing triple quotes on their own line (and optionally leave a blank line before them).[/italic]"
+                ))
+
+                return
+
+            # prefer blank line before closing quotes (soft recommendation)
+            # check previous line (end - 2 index)
+            prev_idx = end - 2
+            if prev_idx >= 0:
+                try:
+                    prev_line: str = lines[prev_idx].rstrip('\r\n')
+
+                except Exception:
+                    prev_line: str = ""
+
+                # if previous line is not blank (contains text other than whitespace),
+                if prev_line.strip() != "":
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=end,
+                        message="❌ [bold yellow]Prefer an empty line before the closing docstring quotes[/bold yellow]",
+                        severity=SeverityLevel.INFO,
+                        rule_id="pep257",
+                        suggestion="[italic]Add a blank line before the closing triple quotes to separate body and end marker.[/italic]"
+                    ))
+
+
+        if tree.body:
+            first = tree.body[0]
+            if isinstance(first, ast.Expr):
+                _check_docnode(first)
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.body:
+                    first_stmt = node.body[0]
+                    if isinstance(first_stmt, ast.Expr):
+                        _check_docnode(first_stmt)
 
         return issues
 
