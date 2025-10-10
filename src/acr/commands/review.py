@@ -1,10 +1,12 @@
 from pathlib import Path
 from typing import Optional
+import time
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from ..core import CodeAnalyzer, ReviewConfig, AnalysisResult
+from ..core import CodeAnalyzer, AnalysisResult
 from ..utils import load_config, find_config_file, print_analysis_result
 
 
@@ -33,6 +35,7 @@ def current(
     try:
         target_path = Path(path)
         config_path: Optional[Path] = None
+        start = time.perf_counter()
 
         if config_file:
             config_path = Path(config_file)
@@ -65,7 +68,8 @@ def current(
         result = AnalysisResult(
             issues=issues,
             files_analyzed=len(set(issue.file for issue in issues)),
-            total_issues=len(issues)
+            total_issues=len(issues),
+            duration=(time.perf_counter() - start)
         )
 
         print_analysis_result(result, output_format)
@@ -84,6 +88,7 @@ def current(
         console.print(f"❌ [bold red]Unexpected error:[/bold red] {e}")
         raise typer.Exit(1)
 
+
 @app.command()
 def file(
     file_path: str = typer.Argument(..., help="[bold green]File[/bold green] to analyze"),
@@ -101,6 +106,7 @@ def file(
     try:
         target_file = Path(file_path)
         config_path: Optional[Path] = None
+        start = time.perf_counter()
 
         if not target_file.exists():
             console.print(f"❌ [bold red]File not found:[/bold red] {target_file}")
@@ -138,7 +144,12 @@ def file(
 
         issues = analyzer.analyze_file(target_file)
 
-        result = AnalysisResult(issues=issues, files_analyzed=1, total_issues=len(issues))
+        result = AnalysisResult(
+            issues=issues,
+            files_analyzed=1,
+            total_issues=len(issues),
+            duration=(time.perf_counter() - start)
+        )
 
         print_analysis_result(result, output_format)
 
@@ -170,6 +181,7 @@ def directory(
     try:
         target_dir = Path(directory_path)
         config_path: Optional[Path] = None
+        start = time.perf_counter()
 
         if not target_dir.exists():
             console.print(f"❌ [bold red]Directory not found:[/bold red] {target_dir}")
@@ -221,7 +233,12 @@ def directory(
         if ignored_files > 0:
             console.print(f"⏭️  [dim]Skipped {ignored_files} files (ignored patterns)[/dim]")
 
-        result = AnalysisResult(issues=issues, files_analyzed=len(analyzed_files), total_issues=len(issues))
+        result = AnalysisResult(
+            issues=issues,
+            files_analyzed=len(analyzed_files),
+            total_issues=len(issues),
+            duration=(time.perf_counter() - start)
+        )
 
 
         print_analysis_result(result, output_format)
@@ -254,6 +271,7 @@ def staged(
     try:
         target_path = Path(repo_path)
         config_path: Optional[Path] = None
+        start = time.perf_counter()
 
 
         if config_file:
@@ -276,14 +294,13 @@ def staged(
             console.print("⚙️  [dim]Using default configuration[/dim]")
 
         analyzer = CodeAnalyzer(config)
-        git_repo = analyzer.git_repo
 
 
         console.print(
             Panel.fit(f"🔍 [bold]Analyzing staged files[/bold] in [green]{target_path}[/green]", border_style="blue")
         )
 
-        staged_files = git_repo.get_staged_files()
+        staged_files = analyzer.git_repo.get_staged_files()
 
         if not staged_files:
             console.print("📭 [yellow]No staged files found[/yellow]")
@@ -298,7 +315,12 @@ def staged(
                 issues.extend(analyzer.analyze_file(file_path))
 
 
-        result = AnalysisResult(issues=issues, files_analyzed=len(staged_files), total_issues=len(issues))
+        result = AnalysisResult(
+            issues=issues,
+            files_analyzed=len(staged_files),
+            total_issues=len(issues),
+            duration=(time.perf_counter() - start)
+        )
 
         print_analysis_result(result, output_format)
 
@@ -334,6 +356,7 @@ def staged(
 #     try:
 #         target_path = Path(repo_path)
 #         config_path: Optional[Path] = None
+#         start = time.perf_counter()
 
 
 #         if config_file:
