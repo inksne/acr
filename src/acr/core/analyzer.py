@@ -65,6 +65,7 @@ class CodeAnalyzer:
             issues.extend(self._check_unused_variables(tree, file_path))
             issues.extend(self._check_type_annotations(tree, file_path))
             issues.extend(self._check_pep8(tree, file_path))
+            issues.extend(self._check_inline_comments(file_path))
 
             # Add Git context to issues
             for issue in issues:
@@ -752,6 +753,68 @@ class CodeAnalyzer:
 
         return any(indicator in name.upper() for indicator in constant_indicators)
 
+
+    def _check_inline_comments(self, file_path: Path) -> list[CodeIssue]:
+        """
+        Check for inline comments (comment on same line as code).
+        Allow comments that contain allowed markers like `type: ignore`, `noqa`, `pragma`, etc.
+        Uses the tokenize module to avoid false-positives for '#' inside strings.
+        """
+        issues: list[CodeIssue] = []
+        pep8_rule = self.config.rules.get("pep8")
+        if not pep8_rule or not pep8_rule.enabled:
+            return issues
+
+        allowed_markers = [
+            "type: ignore", "noqa", "pragma", "pylint:", "flake8", "coverage: ignore",
+            "no-cover", "nocover", "no cover", "nolint"
+        ]
+
+        try:
+            import tokenize
+
+            with open(file_path, "rb") as f:
+                tokens = tokenize.tokenize(f.readline)
+                # For each line we mark whether there was a piece of code before the comment
+
+                code_seen_on_line: dict[int, bool] = {}
+
+                for tok in tokens:
+                    tok_type = tok.type
+                    tok_string = tok.string
+                    lineno = tok.start[0]
+
+                    if tok_type == tokenize.COMMENT:
+                        comment_text = tok_string.lstrip('#').strip().lower()
+
+                        if any(marker in comment_text for marker in allowed_markers):
+                            continue
+
+                        if code_seen_on_line.get(lineno, False):
+                            issues.append(CodeIssue(
+                                file=file_path,
+                                line=lineno,
+                                message="❌ [bold yellow]Inline comment on code line[/bold yellow]",
+                                severity=pep8_rule.severity,
+                                rule_id="pep8",
+                                suggestion="[italic]Move the comment to a separate line above the code or use an allowed inline marker (e.g. `# type: ignore`).[/italic]"
+                            ))
+
+                    else:
+                        # consider tokens other than NL/NEWLINE/ENCODING/ENDMARKER/INDENT/DEDENT/COMMENT to be “code”
+                        if tok_type not in (
+                            tokenize.NL, tokenize.NEWLINE, tokenize.ENCODING,
+                            tokenize.ENDMARKER, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT
+                        ):
+
+                            code_seen_on_line[lineno] = True
+
+
+        except Exception:
+            return issues
+
+        return issues
+
     # ==================== HELPER METHODS (USED BY OTHERS) ====================
 
     def _collect_defined_names(self, tree: ast.AST) -> set[str]:
@@ -1208,6 +1271,20 @@ class CodeAnalyzer:
 
                 else:
                     return "[green]💡 Consider refactoring function with too many arguments.[/green]"
+                
+            elif "inline comment" in issue.message.lower():
+                if has_changes:
+                    return (
+                        "[green]🗒️ Inline comment detected on a code line — "
+                        "move the comment to a separate line above the code or keep only "
+                        "allowed markers (e.g. `# type: ignore`) [bold]before committing[/bold].[/green]"
+                    )
+
+                else:
+                    return (
+                        "[green]💡 Prefer placing comments on their own line or using docstrings; "
+                        "inline comments reduce readability unless they are short and necessary.[/green]"
+                    )
 
             else:
                 if has_changes:
