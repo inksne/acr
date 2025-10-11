@@ -297,7 +297,7 @@ class CodeAnalyzer:
         issues.extend(self._check_blank_lines(lines, file_path))
         issues.extend(self._check_import_order(tree, file_path))
         issues.extend(self._check_naming_conventions(tree, file_path))
-        issues.extend(self._check_whitespace(tree))
+        issues.extend(self._check_whitespace("".join(lines), file_path))
         issues.extend(self._check_trailing_whitespace(lines, file_path))
 
 
@@ -685,18 +685,264 @@ class CodeAnalyzer:
         return issues
 
 
-    def _check_whitespace(self, tree: ast.AST) -> list[CodeIssue]:
-        """Check for proper whitespace usage (PEP 8)."""
+    def _check_whitespace(self, content: str, file_path: Path) -> list[CodeIssue]:
+        """Whitespace checks according to PEP 8 (best-effort)."""
         issues: list[CodeIssue] = []
+        pep8_rule = self.config.rules.get("pep8")
+        if not pep8_rule or not pep8_rule.enabled:
+            return issues
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.BinOp):
-                pass
+        severity = pep8_rule.severity or SeverityLevel.INFO
+
+        import io
+        import tokenize
+
+        try:
+            tokens = list(tokenize.generate_tokens(io.StringIO(content).readline))
+
+        except Exception:
+            return issues
+
+        IGNORE = {
+            tokenize.NL, tokenize.NEWLINE, tokenize.ENCODING,
+            tokenize.ENDMARKER, tokenize.INDENT, tokenize.DEDENT
+        }
+
+        def prev_sig(idx: int):
+            j = idx - 1
+            while j >= 0 and tokens[j].type in IGNORE:
+                j -= 1
+            return tokens[j] if j >= 0 else None
 
 
-            if isinstance(node, ast.Call):
-                if node.args and len(node.args) > 1:
-                    pass
+        def next_sig(idx: int):
+            j = idx + 1
+            while j < len(tokens) and tokens[j].type in IGNORE:
+                j += 1
+            return tokens[j] if j < len(tokens) else None
+
+        # Track bracket depth for contextual checks (slices, calls, etc.)
+        bracket_stack: list = []
+
+        # Operators considered binary for spacing checks
+        BINARY_OPS = {
+            "+", "-", "*", "/", "//", "%", "**",
+            "<<", ">>", "&", "|", "^",
+            "==", "!=", "<", ">", "<=", ">="
+        }
+
+
+        for i, tok in enumerate(tokens):
+            ttype = tok.type
+            tstr = tok.string
+            start_line, start_col = tok.start
+            end_line, end_col = tok.end
+
+            # Track opening/closing brackets to know context (call, index, slice, etc.)
+            if tstr in ("(", "[", "{"):
+                bracket_stack.append((tstr, tok))
+            elif tstr in (")", "]", "}"):
+                if bracket_stack:
+                    bracket_stack.pop()
+
+
+            # 1) Space immediately after opening bracket is not allowed
+            if tstr in ("(", "[", "{"):
+                nxt = next_sig(i)
+                if nxt and nxt.start[1] > end_col:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Unexpected space after opening bracket '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Remove the space after the opening bracket.[/italic]"
+                    ))
+
+
+            # 2) Space immediately before closing bracket is not allowed
+            if tstr in (")", "]", "}"):
+                prev = prev_sig(i)
+                if prev and start_col > prev.end[1]:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Unexpected space before closing bracket '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Remove the space before the closing bracket.[/italic]"
+                    ))
+
+
+            # 3) Comma / semicolon handling (no space before punctuation; reasonable spacing after)
+            if ttype == tokenize.OP and tstr in {",", ";"}:
+                prev = prev_sig(i)
+                nxt = next_sig(i)
+                if prev and start_col > prev.end[1]:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Unexpected space before '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Remove the space before the punctuation mark.[/italic]"
+                    ))
+
+                if nxt and nxt.start[1] - end_col > 1:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Too many spaces after '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Use a single space after commas/semicolons where appropriate.[/italic]"
+                    ))
+
+
+            # 4) Colon handling (slices vs annotations)
+            if ttype == tokenize.OP and tstr == ":":
+                prev = prev_sig(i)
+                nxt = next_sig(i)
+                in_brackets = any(b for b in bracket_stack if b[0] == "[")
+
+                # If looks like annotation "name: Type" -> skip spacing checks
+                is_annotation_like = False
+                if prev and prev.type == tokenize.NAME and nxt:
+                    if nxt.type in (tokenize.NAME, tokenize.STRING):
+                        is_annotation_like = True
+
+                if is_annotation_like:
+                    continue
+
+                if prev and start_col > prev.end[1]:
+                    if not (in_brackets and prev.string in ("[", ",")):
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message="❌ [bold yellow]Unexpected space before ':'[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Remove spaces before ':' unless using extended slice with omitted elements.[/italic]"
+                        ))
+
+                if nxt and nxt.start[1] > end_col:
+                    if not (in_brackets and nxt.string == "]" and prev and prev.string in ("[", ",")):
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message="❌ [bold yellow]Unexpected space after ':'[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Remove spaces after ':' unless using extended slice with omitted elements.[/italic]"
+                        ))
+
+
+            # 5) Function call spacing: no space before '(' when calling
+            if tstr == "(":
+                prev = prev_sig(i)
+                if prev and prev.type == tokenize.NAME and start_col > prev.end[1]:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message="❌ [bold yellow]Unexpected space before '(' in function call[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Remove space before '(' when calling a function.[/italic]"
+                    ))
+
+
+            # 6) Binary operators and '=' handling
+            if ttype == tokenize.OP and (tstr in BINARY_OPS or tstr == "="):
+                prev = prev_sig(i)
+                nxt = next_sig(i)
+                if not prev or not nxt:
+                    continue
+
+                left_is_value = prev.type in (tokenize.NAME, tokenize.NUMBER, tokenize.STRING)
+                right_is_value = nxt.type in (tokenize.NAME, tokenize.NUMBER, tokenize.STRING)
+
+                left_spaces = start_col - prev.end[1]
+                right_spaces = nxt.start[1] - end_col
+
+                # Too many spaces (more than one) on either side
+                if left_spaces > 1:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Too many spaces before operator '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Use a single space around binary operators.[/italic]"
+                    ))
+
+                if right_spaces > 1:
+                    issues.append(CodeIssue(
+                        file=file_path,
+                        line=start_line,
+                        message=f"❌ [bold yellow]Too many spaces after operator '{tstr}'[/bold yellow]",
+                        severity=severity,
+                        rule_id="pep8",
+                        suggestion="[italic]Use a single space around binary operators.[/italic]"
+                    ))
+
+                # Exceptions for '=': kwarg/default/annotation contexts
+                is_keyword_or_default = False
+                if tstr == "=":
+                    in_parens = any(b for b in bracket_stack if b[0] == "(")
+                    if in_parens and prev.type == tokenize.NAME:
+                        is_keyword_or_default = True
+
+                    # look behind for ':' (annotation case like "x: T = v")
+                    j = i - 1
+                    while j >= 0 and tokens[j].type in IGNORE:
+                        j -= 1
+
+                    if j >= 0 and tokens[j].string == ":":
+                        is_keyword_or_default = True
+
+                # Missing spaces for binary-like operators (but not for keyword/default cases)
+                is_binary_like = left_is_value and right_is_value
+                if is_binary_like and not (tstr == "=" and is_keyword_or_default):
+                    if left_spaces == 0 or right_spaces == 0:
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message=f"❌ [bold yellow]Missing spaces around operator '{tstr}'[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Use a single space around binary operators, e.g. `a + b`.[/italic]"
+                        ))
+
+            # 7) Duplicate guard: multiple spaces around operators (safety net)
+            if ttype == tokenize.OP and tstr in {
+                "=", "+=", "-=", "*=", "/=", "//=", "%=", "@=",
+                "==", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "//", "%", "**", "|", "&", "^", ">>", "<<"
+            }:
+                prev = prev_sig(i)
+                nxt = next_sig(i)
+                if prev:
+                    left_spaces = start_col - prev.end[1]
+                    if left_spaces > 1:
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message=f"❌ [bold yellow]Too many spaces before operator '{tstr}'[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Use a single space around binary operators.[/italic]"
+                        ))
+
+                if nxt:
+                    right_spaces = nxt.start[1] - end_col
+                    if right_spaces > 1:
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message=f"❌ [bold yellow]Too many spaces after operator '{tstr}'[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Use a single space around binary operators.[/italic]"
+                        ))
 
         return issues
 
@@ -1318,49 +1564,43 @@ class CodeAnalyzer:
                 return "[green]💡 The type annotation doesn't match the actual value - fix this type conflict.[/green]"
 
         elif issue.rule_id and "pep8" in issue.rule_id:
-            if "line too long" in issue.message.lower():
+            if "line too long" in issue.message.lower() or "too long" in issue.message.lower():
                 if has_changes:
                     return "[green]📏 Break long line [bold]before committing[/bold] to improve readability.[/green]"
 
                 else:
-                    return "[green]💡 Break long lines to comply with PEP 8 (79 characters).[/green]"
+                    return "[green]💡 Break long lines to comply with PEP 8 (79 characters) or your project's policy.[/green]"
 
-            elif "blank lines" in issue.message.lower():
+            if "blank lines" in issue.message.lower() or "too many blank" in issue.message.lower():
                 if has_changes:
                     return "[green]📝 Fix blank lines [bold]before committing[/bold] to follow PEP 8.[/green]"
 
                 else:
-                    return "[green]💡 Use proper blank line spacing (max 2 lines between top-level definitions).[/green]"
+                    return "[green]💡 Use proper blank line spacing (max 2 lines between top-level definitions).[ /green]"
 
-            elif "import order" in issue.message.lower():
+
+            if "import order" in issue.message.lower():
                 if has_changes:
                     return "[green]🔧 Reorder imports [bold]before committing[/bold] (stdlib → third-party → local).[/green]"
 
                 else:
                     return "[green]💡 Reorder imports: standard library → third-party → local imports.[/green]"
 
-            elif "should be in" in issue.message.lower():
+            if "should be in" in issue.message.lower() or "class name should" in issue.message.lower() or "function name should" in issue.message.lower() or "constant should" in issue.message.lower():
                 if has_changes:
-                    return "[green]✏️ Fix naming [bold]before committing[/bold] to follow PEP 8 conventions.[/green]"
+                    return "[green]✏️ Fix naming [bold]before committing[/bold] to follow PEP 8 conventions (snake_case, CamelCase, UPPER_CASE).[/green]"
 
                 else:
-                    return "[green]💡 Follow PEP 8 naming conventions (snake_case, CamelCase, UPPER_CASE).[/green]"
+                    return "[green]💡 Follow PEP 8 naming conventions (snake_case for functions/variables, CamelCase for classes, UPPER_CASE for constants).[/green]"
 
-            elif "trailing whitespace" in issue.message.lower():
+            if "trailing whitespace" in issue.message.lower():
                 if has_changes:
                     return "[green]🧹 Remove trailing whitespace [bold]before committing[/bold].[/green]"
 
                 else:
-                    return "[green]💡 Remove trailing whitespace for cleaner code.[/green]"
+                    return "[green]💡 Remove trailing whitespace for cleaner code and to avoid pre-commit hook failures.[/green]"
 
-            elif "function arguments" in issue.message.lower():
-                if has_changes:
-                    return "[green]🔧 Refactor function [bold]before committing[/bold] to reduce arguments.[/green]"
-
-                else:
-                    return "[green]💡 Consider refactoring function with too many arguments.[/green]"
-                
-            elif "inline comment" in issue.message.lower():
+            if "inline comment" in issue.message.lower():
                 if has_changes:
                     return (
                         "[green]🗒️ Inline comment detected on a code line — "
@@ -1374,12 +1614,99 @@ class CodeAnalyzer:
                         "inline comments reduce readability unless they are short and necessary.[/green]"
                     )
 
-            else:
+            if "unexpected space after opening bracket" in issue.message.lower() or "unexpected space after" in issue.message.lower() and ("(" in issue.message.lower() or "[" in issue.message.lower() or "{" in issue.message.lower()):
                 if has_changes:
-                    return "[green]📝 Fix PEP 8 issue [bold]before committing[/bold] to improve code style.[/green]"
+                    return "[green]🔧 Remove the space immediately after the opening bracket [bold]before committing[/bold] (e.g. use `spam(ham[1])` not `spam( ham[ 1 ] )`).[/green]"
 
                 else:
-                    return "[green]💡 Fix this PEP 8 style guide violation.[/green]"
+                    return "[green]💡 Avoid spaces right after '(' or '[' or '{' — they should be written as `spam(ham[1])`.[/green]"
+
+            if "unexpected space before closing bracket" in issue.message.lower() or "unexpected space before" in issue.message.lower() and (")" in issue.message.lower() or "]" in issue.message.lower() or "}" in issue.message.lower()):
+                if has_changes:
+                    return "[green]🔧 Remove the space before the closing bracket [bold]before committing[/bold] (e.g. use `lst[1]` not `lst[ 1 ]`).[/green]"
+
+                else:
+                    return "[green]💡 Avoid spaces immediately before `)`, `]` or `}`.[/green]"
+
+            if "unexpected space before" in issue.message.lower() and ("," in issue.message.lower() or "comma" in issue.message.lower() or ";" in issue.message.lower() or "semicolon" in issue.message.lower() or ":" in issue.message.lower() or "colon" in issue.message.lower()):
+                if ":" in issue.message.lower() or "colon" in issue.message.lower():
+                    if has_changes:
+                        return "[green]🔧 Remove the space before ':' [bold]before committing[/bold] unless it's part of an extended slice with omitted elements — follow PEP 8 slice spacing rules.[/green]"
+
+                    else:
+                        return "[green]💡 In slicing contexts `:` acts like an operator; avoid spaces around it unless you intentionally omit parameters (e.g., `a[:9]`).[/green]"
+
+                else:
+                    punct = ","
+                    if ";" in issue.message.lower() or "semicolon" in issue.message.lower():
+                        punct = ";"
+
+                    if has_changes:
+                        return f"[green]🔧 Remove the space before `{punct}` [bold]before committing[/bold]. Punctuation should directly follow the previous token.[/green]"
+
+                    else:
+                        return f"[green]💡 No space should appear directly before `{punct}`.[/green]"
+
+            if "unexpected space before '(' in function call" in issue.message.lower() or "unexpected space before '('" in issue.message.lower() and "function" in issue.message.lower() or "space before (' in function" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Remove the space between function name and '(' [bold]before committing[/bold] (e.g. use `spam(1)` not `spam (1)`).[/green]"
+
+                else:
+                    return "[green]💡 Don't put a space before '(' when calling a function.[/green]"
+
+            if "unexpected space before" in issue.message.lower() and ("['" in issue.message.lower() or '["' in issue.message.lower() or "index" in issue.message.lower()):
+                if has_changes:
+                    return "[green]🔧 Remove the space before indexing/slicing [bold]before committing[/bold] (e.g. use `dct['key']` not `dct ['key']`).[/green]"
+
+                else:
+                    return "[green]💡 Avoid spaces between an object and '[' when indexing: use `obj[index]`.[/green]"
+
+            if "too many spaces before operator" in issue.message.lower() or "too many spaces after operator" in issue.message.lower() or ("too many spaces" in issue.message.lower() and "operator" in issue.message.lower()):
+                if has_changes:
+                    return "[green]🔧 Reduce multiple spaces around operators to a single space [bold]before committing[/bold] (e.g. `a = b + c`). If you intentionally align assignments, keep team conventions consistent.[/green]"
+
+                else:
+                    return "[green]💡 Use a single space around binary operators; avoid excessive alignment unless it's a deliberate style in the project.[/green]"
+
+            if "=" in issue.message.lower() and ("keyword" in issue.message.lower() or "default" in issue.message.lower() or "argument" in issue.message.lower()):
+                if has_changes:
+                    return "[green]🔧 For keyword args and default parameter values prefer `arg=val` (no spaces). Use single spaces around assignment operators outside of defaults [bold]before committing[/bold].[/green]"
+
+                else:
+                    return "[green]💡 Use `arg=val` for keyword arguments and `x = 1` for regular assignments; don't add spaces around '=' in keywords/defaults.[/green]"
+
+            if "multiple statements" in issue.message.lower() or ";" in issue.message.lower() and "do_one" not in issue.message.lower():
+                if has_changes:
+                    return "[green]⚠️ Avoid multiple statements on one line — split them into separate lines [bold]before committing[/bold] for readability.[/green]"
+
+                else:
+                    return "[green]💡 Prefer one statement per line for clarity; only use inline simple statements sparingly.[/green]"
+
+            if "unexpected space before ':'" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Remove the space before ':' [bold]before committing[/bold], unless you intentionally use an extended slice with omitted elements.[/green]"
+
+                else:
+                    return "[green]💡 Avoid spaces before ':' — in slicing contexts be mindful of omitted elements (e.g. `a[:9]`).[/green]"
+
+            if "unexpected space after ':'" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Remove the space after ':' [bold]before committing[/bold], unless using an extended slice with omitted elements.[/green]"
+
+                else:
+                    return "[green]💡 Avoid spaces after ':' in most contexts; slices are a special case.[/green]"
+
+            if "missing spaces around operator" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Add spaces around binary operators [bold]before committing[/bold] (e.g. `1 + 1`, `a * b`).[/green]"
+                else:
+                    return "[green]💡 Use a single space around binary operators for readability (e.g. `a + b`).[/green]"
+
+            if has_changes:
+                return "[green]📝 Fix PEP 8 issue [bold]before committing[/bold] to improve code style.[/green]"
+
+            else:
+                return "[green]💡 Fix this PEP 8 style guide violation.[/green]"
 
 
         if has_changes:
