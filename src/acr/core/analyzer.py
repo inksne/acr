@@ -67,6 +67,7 @@ class CodeAnalyzer:
             issues.extend(self._check_pep8(tree, file_path))
             issues.extend(self._check_inline_comments(file_path))
             issues.extend(self._check_pep257_docstrings(tree, file_path, lines))
+            issues.extend(self._check_bare_except(tree, file_path))
 
             # Add Git context to issues
             for issue in issues:
@@ -708,21 +709,21 @@ class CodeAnalyzer:
             tokenize.ENDMARKER, tokenize.INDENT, tokenize.DEDENT
         }
 
-        def prev_sig(idx: int):
+        def prev_sig(idx: int) -> Optional[tokenize.TokenInfo]:
             j = idx - 1
             while j >= 0 and tokens[j].type in IGNORE:
                 j -= 1
             return tokens[j] if j >= 0 else None
 
 
-        def next_sig(idx: int):
+        def next_sig(idx: int) -> Optional[tokenize.TokenInfo]:
             j = idx + 1
             while j < len(tokens) and tokens[j].type in IGNORE:
                 j += 1
             return tokens[j] if j < len(tokens) else None
 
         # Track bracket depth for contextual checks (slices, calls, etc.)
-        bracket_stack: list = []
+        bracket_stack: list[tuple[str, tokenize.TokenInfo]] = []
 
         # Operators considered binary for spacing checks
         BINARY_OPS = {
@@ -841,14 +842,18 @@ class CodeAnalyzer:
             if tstr == "(":
                 prev = prev_sig(i)
                 if prev and prev.type == tokenize.NAME and start_col > prev.end[1]:
-                    issues.append(CodeIssue(
-                        file=file_path,
-                        line=start_line,
-                        message="❌ [bold yellow]Unexpected space before '(' in function call[/bold yellow]",
-                        severity=severity,
-                        rule_id="pep8",
-                        suggestion="[italic]Remove space before '(' when calling a function.[/italic]"
-                    ))
+                    # Exception: allow "except (" constructs (not a function call)
+                    if prev.string.lower() == "except":
+                        pass
+                    else:
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=start_line,
+                            message="❌ [bold yellow]Unexpected space before '(' in function call[/bold yellow]",
+                            severity=severity,
+                            rule_id="pep8",
+                            suggestion="[italic]Remove space before '(' when calling a function.[/italic]"
+                        ))
 
 
             # 6) Binary operators and '=' handling
@@ -1093,11 +1098,13 @@ class CodeAnalyzer:
             if start is None or end is None or end == start:
                 return
 
+            last_line: str = ""
+
             try:
-                last_line: str = lines[end - 1].rstrip('\r\n')
+                last_line = lines[end - 1].rstrip('\r\n')
 
             except Exception:
-                last_line: str = ""
+                pass
 
             stripped_last = last_line.strip()
 
@@ -1107,7 +1114,7 @@ class CodeAnalyzer:
                     line=end,
                     message="❌ [bold yellow]Docstring closing quotes should be on a separate line[/bold yellow]",
                     severity=SeverityLevel.INFO,
-                    rule_id="pep257",
+                    rule_id="pep8",
                     suggestion="[italic]Put the closing triple quotes on their own line (and optionally leave a blank line before them).[/italic]"
                 ))
 
@@ -1117,11 +1124,13 @@ class CodeAnalyzer:
             # check previous line (end - 2 index)
             prev_idx = end - 2
             if prev_idx >= 0:
+                prev_line: str = ""
+
                 try:
-                    prev_line: str = lines[prev_idx].rstrip('\r\n')
+                    prev_line = lines[prev_idx].rstrip('\r\n')
 
                 except Exception:
-                    prev_line: str = ""
+                    pass
 
                 # if previous line is not blank (contains text other than whitespace),
                 if prev_line.strip() != "":
@@ -1130,15 +1139,16 @@ class CodeAnalyzer:
                         line=end,
                         message="❌ [bold yellow]Prefer an empty line before the closing docstring quotes[/bold yellow]",
                         severity=SeverityLevel.INFO,
-                        rule_id="pep257",
+                        rule_id="pep8",
                         suggestion="[italic]Add a blank line before the closing triple quotes to separate body and end marker.[/italic]"
                     ))
 
 
-        if tree.body:
+        if isinstance(tree, ast.Module) and tree.body:
             first = tree.body[0]
             if isinstance(first, ast.Expr):
                 _check_docnode(first)
+
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -1146,6 +1156,27 @@ class CodeAnalyzer:
                     first_stmt = node.body[0]
                     if isinstance(first_stmt, ast.Expr):
                         _check_docnode(first_stmt)
+
+        return issues
+
+
+    def _check_bare_except(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
+        """Detect bare `except:` handlers and warn (INFO)."""
+        issues: list[CodeIssue] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try):
+                for handler in node.handlers:
+                    # bare except: handler.type is None for "except:"
+                    if handler.type is None:
+                        issues.append(CodeIssue(
+                            file=file_path,
+                            line=getattr(handler, "lineno", 1),
+                            message="❌ [bold yellow]Use `except Exception:` or catch specific exceptions instead of bare `except:`[/bold yellow]",
+                            severity=SeverityLevel.INFO,
+                            rule_id="pep8",
+                            suggestion="[italic]Avoid `except:` because it catches system-exiting exceptions (KeyboardInterrupt, SystemExit). Prefer `except Exception:` or specific exception classes.[/italic]"
+                        ))
 
         return issues
 
@@ -1699,8 +1730,16 @@ class CodeAnalyzer:
             if "missing spaces around operator" in issue.message.lower():
                 if has_changes:
                     return "[green]🔧 Add spaces around binary operators [bold]before committing[/bold] (e.g. `1 + 1`, `a * b`).[/green]"
+
                 else:
                     return "[green]💡 Use a single space around binary operators for readability (e.g. `a + b`).[/green]"
+
+            if "bare except" in issue.message.lower() or "except:" in issue.message.lower():
+                if has_changes:
+                    return "[green]🔧 Bare `except:` detected — catching all exceptions is unsafe. Replace with `except Exception:` or catch specific exception types [bold]before committing[/bold].[/green]"
+
+                else:
+                    return "[green]💡 Avoid bare `except:`; prefer `except Exception:` or catching specific exceptions to avoid swallowing system-exiting exceptions like KeyboardInterrupt/SystemExit.[/green]"
 
             if has_changes:
                 return "[green]📝 Fix PEP 8 issue [bold]before committing[/bold] to improve code style.[/green]"
