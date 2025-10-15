@@ -273,6 +273,10 @@ def staged(
         config_path: Optional[Path] = None
         start = time.perf_counter()
 
+        if not target_path.exists() or not (target_path / ".git").exists():
+            console.print(f"❌ [red]Not a git repository: {target_path}[/red]")
+            raise typer.Exit(1)
+
 
         if config_file:
             config_path = Path(config_file)
@@ -293,7 +297,7 @@ def staged(
         else:
             console.print("⚙️  [dim]Using default configuration[/dim]")
 
-        analyzer = CodeAnalyzer(config)
+        analyzer = CodeAnalyzer(config, target_path)
 
 
         console.print(
@@ -309,15 +313,20 @@ def staged(
         console.print(f"📄 [dim]Found {len(staged_files)} staged files[/dim]")
 
 
+        python_files = [p for p in staged_files if p.suffix == '.py']
         issues = []
-        for file_path in staged_files:
-            if file_path.suffix == '.py':
+        for file_path in python_files:
+            staged_content = analyzer.git_repo.get_staged_file_content(file_path)
+            if staged_content is not None:
+                issues.extend(analyzer.analyze_file(file_path, staged_content))
+
+            else:
                 issues.extend(analyzer.analyze_file(file_path))
 
 
         result = AnalysisResult(
             issues=issues,
-            files_analyzed=len(staged_files),
+            files_analyzed=len(python_files),
             total_issues=len(issues),
             duration=(time.perf_counter() - start)
         )

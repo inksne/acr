@@ -13,7 +13,7 @@ DEFAULT_OUTPUT_FORMAT: Final[str] = 'text'
 DEFAULT_FILES_ANALYZED: Final[int] = 0
 DEFAULT_TOTAL_ISSUES: Final[int] = 0
 DEFAULT_DURATION: Final[float] = 0.0
-
+''
 DESCRIPTION: Final[str] = '''
 🔍 [bold]ACR - Automated Code Review[/bold]
 

@@ -8,7 +8,7 @@ import git
 class GitRepo:
     """Manages Git Repository operations."""
 
-    def __init__(self, repo_path: Path = Path('.')) -> None:
+    def __init__(self, repo_path: str | Path = Path('.')) -> None:
         self.repo_path = repo_path
 
         try:
@@ -40,9 +40,40 @@ class GitRepo:
         return list(set(modified_files))  # Remove duplicates
 
 
+    def get_staged_file_content(self, file_path: Path) -> Any:
+        """
+        Return file content from the index (what is staged), or None if unavailable.
+        file_path may be absolute or relative; we convert it to a path relative to repo root.
+        """
+        try:
+            repo_wd = getattr(self.repo, "working_tree_dir", None)
+            base = Path(repo_wd) if repo_wd is not None else self.repo_path
+            rel = Path(file_path).resolve().relative_to(base)
+
+            return self.repo.git.show(f":{str(rel)}")
+
+        except Exception:
+            return None
+
+
     def get_staged_files(self) -> list[Path]:
         """Get files staged for commit."""
-        return [Path(item.a_path) for item in self.repo.index.diff('HEAD') if item.a_path]
+
+        repo_wd: Optional[str] = getattr(self.repo, "working_tree_dir", None)
+        base: str | Path = Path(".")
+
+        if isinstance(repo_wd, str):
+            base = Path(repo_wd)
+
+        else:
+            base = self.repo_path
+
+        try:
+            names = self.repo.git.diff('--cached', '--name-only').splitlines()
+            return [(base / n).resolve() for n in names if n]
+
+        except git.GitCommandError:
+            return [(base / Path(item.a_path)).resolve() for item in self.repo.index.diff('HEAD') if item.a_path]
 
 
     def get_unstaged_files(self) -> list[Path]:
@@ -53,6 +84,19 @@ class GitRepo:
     def get_untracked_files(self) -> list[Path]:
         """Get untracked files."""
         return [Path(item) for item in self.repo.untracked_files]
+
+
+    def get_staged_diff_for_file(self, file_path: Path) -> Any:
+        """Return diff of staged changes for a file (index vs HEAD)."""
+        try:
+            repo_wd = getattr(self.repo, "working_tree_dir", None)
+            base = Path(repo_wd) if repo_wd is not None else self.repo_path
+            rel = str(Path(file_path).resolve().relative_to(base))
+
+            return self.repo.git.diff('--cached', '--', rel)
+
+        except Exception:
+            return ""
 
 
     def get_diff_for_file(self, file_path: Path) -> Any:

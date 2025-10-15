@@ -10,9 +10,9 @@ from ..configuration import MAX_LINES_FUNCTION, MAX_COMPLEXITY, MAX_LINE_LENGTH_
 class CodeAnalyzer:
     """Main code analyzer class with Git support."""
 
-    def __init__(self, config: Optional[ReviewConfig] = None) -> None:
+    def __init__(self, config: Optional[ReviewConfig] = None, repo_path: Path = Path(".")) -> None:
         self.config = config or ReviewConfig()
-        self.git_repo = GitRepo()
+        self.git_repo = GitRepo(repo_path)
 
     # ==================== PUBLIC INTERFACE ====================
 
@@ -45,15 +45,20 @@ class CodeAnalyzer:
         return issues
 
 
-    def analyze_file(self, file_path: Path) -> list[CodeIssue]:
+    def analyze_file(self, file_path: Path, content: Optional[str] = None) -> list[CodeIssue]:
         """Analyze single Python file."""
-        issues = []
+        issues: list[CodeIssue] = []
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            if content is None:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
 
-            file_diff = self.git_repo.get_diff_for_file(file_path)
+            if content is not None and getattr(self.git_repo, "get_staged_diff_for_file", None):
+                file_diff = self.git_repo.get_staged_diff_for_file(file_path)
+            else:
+                file_diff = self.git_repo.get_diff_for_file(file_path)
+
             tree = ast.parse("".join(lines), filename=str(file_path))
 
 
@@ -71,10 +76,10 @@ class CodeAnalyzer:
 
             # Add Git context to issues
             for issue in issues:
-                issue.suggestion = self._get_git_aware_suggestion(issue, file_diff)
+                issue.suggestion = self._get_git_aware_suggestion(issue, file_diff or "")
 
 
-        except (SyntaxError, UnicodeDecodeError) as e:
+        except (SyntaxError, UnicodeDecodeError, Exception) as e:
             issues.append(CodeIssue(
                 file=file_path,
                 line=1,
