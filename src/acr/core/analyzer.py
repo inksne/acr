@@ -234,6 +234,28 @@ class CodeAnalyzer:
             return issues
 
         defined_names = self._collect_defined_names(tree)
+        def _extract_names_from_target(node: ast.AST) -> set[str]:
+            names: set[str] = set()
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for elt in node.elts:
+                    names.update(_extract_names_from_target(elt))
+            # ignore attributes (obj.attr) as they do not define a new local name
+            # ignore other complex targets for now
+            return names
+
+
+        loop_defined_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.For, ast.AsyncFor)):
+                loop_defined_names.update(_extract_names_from_target(node.target))
+
+            elif isinstance(node, ast.comprehension):
+                loop_defined_names.update(_extract_names_from_target(node.target))
+
+        defined_names |= loop_defined_names
+
         used_names = self._collect_used_names(tree)
 
         for name, line in used_names:
