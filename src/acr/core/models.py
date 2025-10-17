@@ -98,7 +98,7 @@ class ReviewConfig:
                 id="magic_number",
                 name="Magic Number Detection",
                 description="Find unnamed numerical constants in code",
-                severity=SeverityLevel.WARNING
+                severity=SeverityLevel.INFO
             ),
 
             "long_function": Rule(
