@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from ..core import CodeAnalyzer, AnalysisResult
+from ..core import CodeAnalyzer, AnalysisResult, SeverityLevel
 from ..utils import load_config, find_config_file, print_analysis_result
 
 
@@ -21,7 +21,8 @@ def current(
     path: str = typer.Argument(".", help="[bold green]Path[/bold green] to git repository"),
     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
-    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]"),
+    severity: str = typer.Option("info", "--severity", "-S", help="[magenta]Minimum severity to display[/magenta]: info, warning, error, critical", show_choices=True)
 ) -> None:
     """
     [bold]Analyze current changes[/bold] in git repository.
@@ -56,7 +57,7 @@ def current(
         else:
             console.print("⚙️  [dim]Using default configuration[/dim]")
 
-        analyzer = CodeAnalyzer(config)
+        analyzer = CodeAnalyzer(config, target_path)
 
         console.print(
             Panel.fit(f"🔍 [bold]Analyzing Git changes in[/bold] [green]{target_path}[/green]", border_style="blue")
@@ -65,8 +66,27 @@ def current(
 
         issues = analyzer.analyze_git_changes()
 
+
+        selected_sev: SeverityLevel = SeverityLevel.INFO
+
+        try:
+            selected_sev = SeverityLevel(severity.lower())
+        except Exception:
+            console.print(f"⚠️  [yellow]Unknown severity '{severity}' — defaulting to 'info'[/yellow]")
+
+
+        order = {
+            SeverityLevel.INFO: 0,
+            SeverityLevel.WARNING: 1,
+            SeverityLevel.ERROR: 2,
+            SeverityLevel.CRITICAL: 3
+        }
+
+        allowed = {s for s in SeverityLevel if order[s] >= order[selected_sev]}
+        filtered_issues = [i for i in issues if i.severity in allowed]
+
         result = AnalysisResult(
-            issues=issues,
+            issues=filtered_issues,
             files_analyzed=len(set(issue.file for issue in issues)),
             total_issues=len(issues),
             duration=(time.perf_counter() - start)
@@ -94,7 +114,8 @@ def file(
     file_path: str = typer.Argument(..., help="[bold green]File[/bold green] to analyze"),
     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
-    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]"),
+    severity: str = typer.Option("info", "--severity", "-S", help="[magenta]Minimum severity to display[/magenta]: info, warning, error, critical", show_choices=True)
 ) -> None:
     """
     [bold]Analyze specific file[/bold] for code quality issues.
@@ -144,8 +165,27 @@ def file(
 
         issues = analyzer.analyze_file(target_file)
 
+
+        selected_sev: SeverityLevel = SeverityLevel.INFO
+
+        try:
+            selected_sev = SeverityLevel(severity.lower())
+        except Exception:
+            console.print(f"⚠️  [yellow]Unknown severity '{severity}' — defaulting to 'info'[/yellow]")
+
+
+        order = {
+            SeverityLevel.INFO: 0,
+            SeverityLevel.WARNING: 1,
+            SeverityLevel.ERROR: 2,
+            SeverityLevel.CRITICAL: 3
+        }
+
+        allowed = {s for s in SeverityLevel if order[s] >= order[selected_sev]}
+        filtered_issues = [i for i in issues if i.severity in allowed]
+
         result = AnalysisResult(
-            issues=issues,
+            issues=filtered_issues,
             files_analyzed=1,
             total_issues=len(issues),
             duration=(time.perf_counter() - start)
@@ -169,7 +209,8 @@ def directory(
     directory_path: str = typer.Argument(".", help="[bold green]Directory[/bold green] to analyze"),
     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json",show_choices=True),
-    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]"),
+    severity: str = typer.Option("info", "--severity", "-S", help="[magenta]Minimum severity to display[/magenta]: info, warning, error, critical", show_choices=True)
 ) -> None:
     """
     [bold]Analyze all Python files[/bold] in directory recursively.
@@ -233,8 +274,27 @@ def directory(
         if ignored_files > 0:
             console.print(f"⏭️  [dim]Skipped {ignored_files} files (ignored patterns)[/dim]")
 
+
+        selected_sev: SeverityLevel = SeverityLevel.INFO
+
+        try:
+            selected_sev = SeverityLevel(severity.lower())
+        except Exception:
+            console.print(f"⚠️  [yellow]Unknown severity '{severity}' — defaulting to 'info'[/yellow]")
+
+
+        order = {
+            SeverityLevel.INFO: 0,
+            SeverityLevel.WARNING: 1,
+            SeverityLevel.ERROR: 2,
+            SeverityLevel.CRITICAL: 3
+        }
+
+        allowed = {s for s in SeverityLevel if order[s] >= order[selected_sev]}
+        filtered_issues = [i for i in issues if i.severity in allowed]
+
         result = AnalysisResult(
-            issues=issues,
+            issues=filtered_issues,
             files_analyzed=len(analyzed_files),
             total_issues=len(issues),
             duration=(time.perf_counter() - start)
@@ -259,7 +319,8 @@ def staged(
     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json",show_choices=True),
-    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+    strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]"),
+    severity: str = typer.Option("info", "--severity", "-S", help="[magenta]Minimum severity to display[/magenta]: info, warning, error, critical", show_choices=True)
 ) -> None:
     """
     [bold]Analyze staged files[/bold] (files ready for commit).
@@ -324,8 +385,27 @@ def staged(
                 issues.extend(analyzer.analyze_file(file_path))
 
 
+        selected_sev: SeverityLevel = SeverityLevel.INFO
+
+        try:
+            selected_sev = SeverityLevel(severity.lower())
+        except Exception:
+            console.print(f"⚠️  [yellow]Unknown severity '{severity}' — defaulting to 'info'[/yellow]")
+
+
+        order = {
+            SeverityLevel.INFO: 0,
+            SeverityLevel.WARNING: 1,
+            SeverityLevel.ERROR: 2,
+            SeverityLevel.CRITICAL: 3
+        }
+
+        allowed = {s for s in SeverityLevel if order[s] >= order[selected_sev]}
+        filtered_issues = [i for i in issues if i.severity in allowed]
+
+
         result = AnalysisResult(
-            issues=issues,
+            issues=filtered_issues,
             files_analyzed=len(python_files),
             total_issues=len(issues),
             duration=(time.perf_counter() - start)
@@ -352,7 +432,8 @@ def staged(
 #     repo_path: str = typer.Argument(".", help="[bold green]Repository path[/bold green]"),
 #     config_file: str = typer.Option(None, "--config", "-c", help="[yellow]Config file[/yellow] path"),
 #     output_format: str = typer.Option("rich", "--output", "-o", help="[blue]Output format[/blue]: rich, text, json", show_choices=True),
-#     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]")
+#     strict: bool = typer.Option(False, "--strict", "-s", help="[red]Fail on warnings[/red]"),
+#     severity: str = typer.Option("info", "--severity", "-S", help="[magenta]Minimum severity to display[/magenta]: info, warning, error, critical", show_choices=True)
 # ) -> None:
 #     """
 #     [bold]Analyze branch differences[/bold] compared to base branch.
