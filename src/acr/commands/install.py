@@ -254,7 +254,7 @@ def init_hooks_path(
     """
     try:
         repo_path = _ensure_repo_path(repo)
-        repo = GitRepo(repo_path)
+        git_repo = GitRepo(repo_path)
         hooks_folder = repo_path / dir_name
         hooks_folder.mkdir(parents=True, exist_ok=True)
 
@@ -265,7 +265,7 @@ def init_hooks_path(
 
 
         try:
-            repo.repo.git.config("core.hooksPath", dir_name)
+            git_repo.repo.git.config("core.hooksPath", dir_name)
             console.print(f"✅ Set core.hooksPath = {dir_name}")
             console.print("🔁 Now add and commit the hooks directory so it's versioned across clones.")
 
