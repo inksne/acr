@@ -223,6 +223,3 @@ class GitHookManager:
 
         hook_path = self.hooks_dir / hook_type
         return hook_path.exists()
-    
-
-&
