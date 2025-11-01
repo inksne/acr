@@ -112,11 +112,50 @@ class CodeAnalyzer:
 
         ignored_numbers = {0, 1, -1, 100, 1000}
 
+        # First pass: collect line numbers of constants that are assigned to module-level UPPER_CASE names
+        # or annotated with Final — these should NOT be treated as magic numbers.
+        exempt_lines: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                # value can be constant or tuple/list of constants
+                value = node.value
+                is_value_numeric_const = False
+                const_line = getattr(value, "lineno", None)
+
+                if isinstance(value, ast.Constant) and isinstance(value.value, (int, float)):
+                    is_value_numeric_const = True
+
+                elif isinstance(value, (ast.Tuple, ast.List)):
+                    # if all elements are numeric constants — consider exempt if target is UPPER_CASE
+                    elems = [e for e in value.elts if isinstance(e, ast.Constant) and isinstance(e.value, (int, float))]
+                    if elems and len(elems) == len(value.elts):
+                        is_value_numeric_const = True
+                        const_line = getattr(value.elts[0], "lineno", const_line)
+
+                if is_value_numeric_const:
+                    for tgt in node.targets:
+                        if isinstance(tgt, ast.Name) and tgt.id.isupper():
+                            if const_line:
+                                exempt_lines.add(const_line)
+
+                            else:
+                                exempt_lines.add(node.lineno)
+
+            # Annotated assignment: NAME: Final[...] = CONST  or NAME: "Final[int]" = CONST
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if isinstance(target, ast.Name):
+                    ann = node.annotation
+                    # if annotated as Final[...] or target is uppercase -> exempt
+                    if (ann is not None and self._annotation_is_final(ann)) or target.id.isupper():
+                        exempt_lines.add(node.lineno)
+
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
                 number = node.value
 
-                if number in ignored_numbers:
+                if number in ignored_numbers or getattr(node, "lineno", None) in exempt_lines:
                     continue
 
                 issues.append(CodeIssue(
@@ -276,14 +315,24 @@ class CodeAnalyzer:
         """Check for variables that are defined but not used."""
         issues: list[CodeIssue] = []
         unused_rule = self.config.rules.get("unused_variable")
-        
+
         if not unused_rule or not unused_rule.enabled:
             return issues
+
+        final_vars: set[str] = set()
+        for node in ast.walk(tree):
+            # only consider annotated assignments (AnnAssign) with simple name target
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.annotation:
+                if self._annotation_is_final(node.annotation):
+                    final_vars.add(node.target.id)
 
         used_variables = self._collect_used_variables(tree)
         defined_variables = self._collect_defined_variables(tree)
 
         for var_name, (line, var_type) in defined_variables.items():
+            if var_name.isupper() or var_name in final_vars:
+                continue
+
             if var_name not in used_variables and not self._should_ignore_variable(var_name, var_type):
                 issues.append(CodeIssue(
                     file=file_path,
@@ -366,8 +415,14 @@ class CodeAnalyzer:
 
         for node in ast.walk(tree):
             if isinstance(node, ast.AnnAssign) and node.annotation:
+                ann = node.annotation
+                is_final = self._annotation_is_final(ann)
+
+                if is_final:
+                    continue
+
                 issues.extend(self._check_single_annotation(node, file_path))
-                if type_mismatch_rule and type_mismatch_rule.enabled and node.value:
+                if type_mismatch_rule and type_mismatch_rule.enabled and getattr(node, "value", None):
                     issues.extend(self._check_type_mismatch(node, file_path))
 
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1001,6 +1056,28 @@ class CodeAnalyzer:
                 ))
 
         return issues
+
+
+    def _annotation_is_final(self, ann: ast.AST) -> bool:
+        """
+        Return True if the annotation AST node represents Final[...] (typing.Final or attribute form).
+        Also handles string annotations that contain 'Final'.
+        """
+        if ann is None:
+            return False
+
+        base = ann.value if isinstance(ann, ast.Subscript) else ann
+
+        if isinstance(base, ast.Name) and base.id == "Final":
+            return True
+
+        if isinstance(base, ast.Attribute) and getattr(base, "attr", None) == "Final":
+            return True
+
+        if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+            return "Final" in ann.value
+
+        return False
 
 
     def _is_snake_case(self, name: str) -> bool:
