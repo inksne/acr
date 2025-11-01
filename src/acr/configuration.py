@@ -28,5 +28,4 @@ Your code quality assistant.
 [bold]Quick start:[/bold]
   [cyan]acr review current[/cyan]    - Analyze current changes
   [cyan]acr install hook[/cyan]      - Set up automatic reviews
-  [cyan]acr config init[/cyan]       - Configure for your project
 '''
