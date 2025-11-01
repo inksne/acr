@@ -764,7 +764,7 @@ class CodeAnalyzer:
                             rule_id="pep8",
                             suggestion="[italic]Use UPPER_CASE for constants (e.g., MAX_VALUE).[/italic]"
                         ))
-
+    
         return issues
 
 
@@ -795,6 +795,7 @@ class CodeAnalyzer:
             j = idx - 1
             while j >= 0 and tokens[j].type in IGNORE:
                 j -= 1
+
             return tokens[j] if j >= 0 else None
 
 
@@ -802,6 +803,7 @@ class CodeAnalyzer:
             j = idx + 1
             while j < len(tokens) and tokens[j].type in IGNORE:
                 j += 1
+
             return tokens[j] if j < len(tokens) else None
 
         # Track bracket depth for contextual checks (slices, calls, etc.)
@@ -824,6 +826,7 @@ class CodeAnalyzer:
             # Track opening/closing brackets to know context (call, index, slice, etc.)
             if tstr in ("(", "[", "{"):
                 bracket_stack.append((tstr, tok))
+
             elif tstr in (")", "]", "}"):
                 if bracket_stack:
                     bracket_stack.pop()
@@ -882,23 +885,53 @@ class CodeAnalyzer:
                     ))
 
 
-            # 4) Colon handling (slices vs annotations)
+            # 4) Colon handling (slices vs annotations vs dict keys)
             if ttype == tokenize.OP and tstr == ":":
-                prev = prev_sig(i)
-                nxt = next_sig(i)
+                # compute surrounding tokens with indices (we need index to detect dict-key context)
+                j = i - 1
+                while j >= 0 and tokens[j].type in IGNORE:
+                    j -= 1
+
+                prev = tokens[j] if j >= 0 else None
+
+                k = i + 1
+                while k < len(tokens) and tokens[k].type in IGNORE:
+                    k += 1
+
+                nxt = tokens[k] if k < len(tokens) else None
+
+                # token before the previous (to detect '{' or ',' before a key in a dict literal)
+                bj = j - 1
+                while bj >= 0 and tokens[bj].type in IGNORE:
+                    bj -= 1
+
+                before_prev = tokens[bj] if bj >= 0 else None
+
                 in_brackets = any(b for b in bracket_stack if b[0] == "[")
 
-                # If looks like annotation "name: Type" -> skip spacing checks
+                # --- Annotations ---
+                # If the ':' is preceded by a name (NAME) and the ':' is followed by a name/string/type (NAME/STRING) as expected,
+                # then most likely this is a parameter or variable annotation (x: str, arg: "T").
                 is_annotation_like = False
                 if prev and prev.type == tokenize.NAME and nxt:
-                    if nxt.type in (tokenize.NAME, tokenize.STRING):
+                    if nxt.type == tokenize.NAME or nxt.type == tokenize.STRING:
                         is_annotation_like = True
 
-                if is_annotation_like:
+                # --- Mapping key (dict literal) detection ---
+                # If the token before the key is '{' or ',', then prev is likely a dict key (string/name/number).
+                is_mapping_key = False
+                if prev and before_prev and before_prev.string in ("{", ","):
+                    if prev.type in (tokenize.STRING, tokenize.NAME, tokenize.NUMBER):
+                        is_mapping_key = True
+
+                if is_annotation_like or is_mapping_key:
                     continue
 
                 if prev and start_col > prev.end[1]:
-                    if not (in_brackets and prev.string in ("[", ",")):
+                    if in_brackets and prev.string in ("[", ","):
+                        pass
+
+                    else:
                         issues.append(CodeIssue(
                             file=file_path,
                             line=start_line,
@@ -928,6 +961,7 @@ class CodeAnalyzer:
                     # and allow "in (" contexts (e.g. for x in (1, 2):)
                     if prev.string.lower() in ("except", "in"):
                         pass
+
                     else:
                         issues.append(CodeIssue(
                             file=file_path,
