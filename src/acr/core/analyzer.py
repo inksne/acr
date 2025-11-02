@@ -724,7 +724,24 @@ class CodeAnalyzer:
     def _check_naming_conventions(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
         """Check naming conventions (PEP 8)."""
         issues: list[CodeIssue] = []
-        
+
+        # Build a parent map so we can determine whether a node is module-level
+        parents: dict[ast.AST, ast.AST] = {}
+
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        def _is_module_level(node: ast.AST) -> bool:
+            """Return True if the node is at module level (not inside function/class)."""
+            cur = node
+            while cur in parents:
+                cur = parents[cur]
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                    return False
+
+            return True
+
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 if not self._is_camel_case(node.name):
@@ -737,7 +754,6 @@ class CodeAnalyzer:
                         suggestion="[italic]Use CamelCase for class names (e.g., MyClass).[/italic]"
                     ))
 
-
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if not self._is_snake_case(node.name):
                     issues.append(CodeIssue(
@@ -749,22 +765,25 @@ class CodeAnalyzer:
                         suggestion="[italic]Use snake_case for function and variable names (e.g., my_function).[/italic]"
                     ))
 
-
             elif isinstance(node, ast.Assign):
-                if (len(node.targets) == 1 and 
+                # Only consider single-target simple name assignments that are at module level.
+                # This avoids flagging local temporaries like `is_keyword_or_default`.
+                if (len(node.targets) == 1 and
                     isinstance(node.targets[0], ast.Name) and
+                    _is_module_level(node) and
                     self._is_constant_name(node.targets[0].id)):
-                    
-                    if not node.targets[0].id.isupper():
+
+                    name = node.targets[0].id
+                    if not name.isupper():
                         issues.append(CodeIssue(
                             file=file_path,
                             line=node.lineno,
-                            message=f"❌ [bold yellow]Constant should be in UPPER_CASE: {node.targets[0].id}[/bold yellow]",
+                            message=f"❌ [bold yellow]Constant should be in UPPER_CASE: {name}[/bold yellow]",
                             severity=SeverityLevel.INFO,
                             rule_id="pep8",
                             suggestion="[italic]Use UPPER_CASE for constants (e.g., MAX_VALUE).[/italic]"
                         ))
-    
+
         return issues
 
 
