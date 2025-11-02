@@ -610,18 +610,43 @@ class CodeAnalyzer:
     # ==================== PEP 8 CHECKS ====================
 
     def _check_line_length(self, lines: list[str], file_path: Path) -> list[CodeIssue]:
-        """Check if lines exceed maximum length (PEP 8: 79 characters)."""
+        """
+        Check if lines exceed maximum length (PEP 8: 79 characters).
+
+        Supports two modes controlled by pep8 rule parameter `line_mode`:
+        - "pep8" (default)      : count full line length (including leading indent)
+        - "strip_indent"        : ignore leading whitespace when counting length
+        """
         issues: list[CodeIssue] = []
+        pep8_rule = self.config.rules.get("pep8")
+
+        # default mode = pep8 (count full line, including indent)
+        line_mode = "pep8"
+        if pep8_rule and pep8_rule.parameters:
+            line_mode = str(pep8_rule.parameters.get("line_mode", "pep8")).lower()
+
+        severity = pep8_rule.severity if pep8_rule and pep8_rule.severity else SeverityLevel.INFO
 
         for i, line in enumerate(lines, 1):
-            line_no_newline = line.rstrip('\r\n')
-            if len(line_no_newline) > MAX_LINE_LENGTH_PEP8:
-                if not any(x in line_no_newline for x in ['http://', 'https://', 'pragma:', 'type:']):
+            line_no_newline = line.rstrip("\r\n")
+            length = 0
+
+            # compute length according to selected mode
+            if line_mode == "strip_indent":
+                length = len(line_no_newline.lstrip())
+
+            else:
+                # default PEP8 behaviour: count entire line, including leading spaces
+                length = len(line_no_newline)
+
+            if length > MAX_LINE_LENGTH_PEP8:
+                # skip obvious false-positives (URLs, pragmas, type comments)
+                if not any(x in line_no_newline for x in ["http://", "https://", "pragma:", "type:"]):
                     issues.append(CodeIssue(
                         file=file_path,
                         line=i,
-                        message=f"❌ [bold yellow]Line too long ({len(line_no_newline)} > {MAX_LINE_LENGTH_PEP8} characters)[/bold yellow]",
-                        severity=SeverityLevel.INFO,
+                        message=f"❌ [bold yellow]Line too long ({length} > {MAX_LINE_LENGTH_PEP8} characters)[/bold yellow]",
+                        severity=severity,
                         rule_id="pep8",
                         suggestion="[italic]Break long lines to improve readability.[/italic]"
                     ))
