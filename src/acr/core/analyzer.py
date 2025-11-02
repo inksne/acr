@@ -625,8 +625,6 @@ class CodeAnalyzer:
         if pep8_rule and pep8_rule.parameters:
             line_mode = str(pep8_rule.parameters.get("line_mode", "pep8")).lower()
 
-        severity = pep8_rule.severity if pep8_rule and pep8_rule.severity else SeverityLevel.INFO
-
         for i, line in enumerate(lines, 1):
             line_no_newline = line.rstrip("\r\n")
             length = 0
@@ -646,7 +644,7 @@ class CodeAnalyzer:
                         file=file_path,
                         line=i,
                         message=f"❌ [bold yellow]Line too long ({length} > {MAX_LINE_LENGTH_PEP8} characters)[/bold yellow]",
-                        severity=severity,
+                        severity=SeverityLevel.INFO,
                         rule_id="pep8",
                         suggestion="[italic]Break long lines to improve readability.[/italic]"
                     ))
