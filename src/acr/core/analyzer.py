@@ -959,7 +959,7 @@ class CodeAnalyzer:
                 if prev and prev.type == tokenize.NAME and start_col > prev.end[1]:
                     # Exception: allow "except (" constructs (not a function call)
                     # and allow "in (" contexts (e.g. for x in (1, 2):)
-                    if prev.string.lower() in ("except", "in"):
+                    if prev.string.lower() in ("except", "in", "or", "and"):
                         pass
 
                     else:
