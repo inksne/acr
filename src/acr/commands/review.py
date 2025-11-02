@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ..core import CodeAnalyzer, AnalysisResult, SeverityLevel
-from ..utils import load_config, find_config_file, print_analysis_result
+from ..utils import load_config, find_config, print_analysis_result
 
 
 
@@ -45,7 +45,7 @@ def current(
                 config_path = None
 
         else:
-            config_path = find_config_file(target_path)
+            config_path = find_config(target_path)
 
         config = load_config(config_path)
         config.strict = strict
@@ -146,7 +146,7 @@ def file(
                 config_path = None
 
         else:
-            config_path = find_config_file(target_file.parent)
+            config_path = find_config(target_file.parent)
 
         config = load_config(config_path)
         config.strict = strict
@@ -240,7 +240,7 @@ def directory(
                 config_path = None
 
         else:
-            config_path = find_config_file(target_dir)
+            config_path = find_config(target_dir)
 
         config = load_config(config_path)
         config.strict = strict
@@ -346,7 +346,7 @@ def staged(
                 config_path = None
 
         else:
-            config_path = find_config_file(target_path)
+            config_path = find_config(target_path)
 
         config = load_config(config_path)
         config.strict = strict

@@ -8,7 +8,7 @@ from .helpers import get_main_table, get_rules_table
 from ..core import ReviewConfig, Rule, SeverityLevel
 
 
-def find_config_file(start_path: Path = Path(".")) -> Optional[Path]:
+def find_config(start_path: Path = Path(".")) -> Optional[Path]:
     """
     Find .acr.yaml starting from start_path and going up to filesystem root.
     
