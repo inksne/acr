@@ -272,41 +272,114 @@ class CodeAnalyzer:
         if not undefined_rule or not undefined_rule.enabled:
             return issues
 
-        defined_names = self._collect_defined_names(tree)
+        # Start with whatever the existing collector gives (if available)
+        try:
+            base_defined = set(self._collect_defined_names(tree) or [])
+
+        except Exception:
+            base_defined = set()
+
         def _extract_names_from_target(node: ast.AST) -> set[str]:
+            """Recursively extract simple variable names from assignment/target nodes."""
             names: set[str] = set()
             if isinstance(node, ast.Name):
                 names.add(node.id)
-            elif isinstance(node, (ast.Tuple, ast.List)):
+
+            elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
                 for elt in node.elts:
                     names.update(_extract_names_from_target(elt))
-            # ignore attributes (obj.attr) as they do not define a new local name
-            # ignore other complex targets for now
+            elif isinstance(node, ast.Starred):
+                names.update(_extract_names_from_target(node.value))
+
+            # ignore Attribute (obj.attr) because it doesn't create a new local name
+            # ignore Subscript and other complex targets
+
             return names
 
+        defined_names: set[str] = set(base_defined)
 
-        loop_defined_names: set[str] = set()
+
         for node in ast.walk(tree):
-            if isinstance(node, (ast.For, ast.AsyncFor)):
-                loop_defined_names.update(_extract_names_from_target(node.target))
+            # regular assignments: a = ..., a, b = ...
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    defined_names.update(_extract_names_from_target(tgt))
 
+            # annotated assignments: x: int = 1  or x: Final[int] = 1
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if isinstance(target, ast.Name):
+                    defined_names.add(target.id)
+
+                else:
+                    defined_names.update(_extract_names_from_target(target))
+
+            # for loops: for x in ... / async for
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                defined_names.update(_extract_names_from_target(node.target))
+
+            # comprehensions: genexp, listcomp, setcomp, dictcomp have ast.comprehension nodes
             elif isinstance(node, ast.comprehension):
-                loop_defined_names.update(_extract_names_from_target(node.target))
+                defined_names.update(_extract_names_from_target(node.target))
 
-        defined_names |= loop_defined_names
+            # with ... as var:
+            elif isinstance(node, ast.With):
+                for item in node.items:
+                    if getattr(item, "optional_vars", None) is not None:
+                        defined_names.update(_extract_names_from_target(item.optional_vars))
+
+            # exception handler: except Exception as e:
+            elif isinstance(node, ast.ExceptHandler):
+                if getattr(node, "name", None):
+                    if isinstance(node.name, str):
+                        defined_names.add(node.name)
+
+                    elif isinstance(node.name, ast.Name):
+                        defined_names.add(node.name.id)
+
+            # function and async function defs: function name + arg names
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defined_names.add(node.name)
+                # positional / kw / vararg / kwarg / posonly / kwonly
+                for arg in getattr(node.args, "posonlyargs", []) + node.args.args + node.args.kwonlyargs:
+                    if getattr(arg, "arg", None):
+                        defined_names.add(arg.arg)
+
+                if node.args.vararg and getattr(node.args.vararg, "arg", None):
+                    defined_names.add(node.args.vararg.arg)
+
+                if node.args.kwarg and getattr(node.args.kwarg, "arg", None):
+                    defined_names.add(node.args.kwarg.arg)
+
+            # class definitions: class name
+            elif isinstance(node, ast.ClassDef):
+                defined_names.add(node.name)
+
+            # imports: import x as y  -> y or x (if no as)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    if alias.asname:
+                        defined_names.add(alias.asname)
+
+                    else:
+                        # top-level name only (module package)
+                        if alias.name:
+                            defined_names.add(alias.name.split('.')[0])
 
         used_names = self._collect_used_names(tree)
 
         for name, line in used_names:
-            if name not in defined_names and not self._is_builtin(name):
-                issues.append(CodeIssue(
-                    file=file_path,
-                    line=line,
-                    message=f"❌ [bold red]Undefined variable:[/bold red] [bold]{name}[/bold]",
-                    severity=undefined_rule.severity,
-                    rule_id="undefined_variable",
-                    suggestion="[italic]Define this variable or check for typos.[/italic]"
-                ))
+            if name in defined_names or self._is_builtin(name) or (name.startswith("__") and name.endswith("__")):
+                continue
+
+            issues.append(CodeIssue(
+                file=file_path,
+                line=line,
+                message=f"❌ [bold red]Undefined variable:[/bold red] [bold]{name}[/bold]",
+                severity=undefined_rule.severity,
+                rule_id="undefined_variable",
+                suggestion="[italic]Define this variable or check for typos.[/italic]"
+            ))
 
         return issues
 
@@ -438,35 +511,62 @@ class CodeAnalyzer:
         return issues
 
 
-    def _check_function_annotations(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: Path) -> list[CodeIssue]:
+    def _check_function_annotations(self, node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: Path) -> list[CodeIssue]:
         """Check type annotations for a function."""
         issues: list[CodeIssue] = []
-
-        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        missing_annotation_rule = self.config.rules.get("missing_type_annotation")
+        if not missing_annotation_rule or not missing_annotation_rule.enabled:
             return issues
 
+        SKIP_PARAM_NAMES = {"self", "cls", "mcs"}
 
-        for arg in func_node.args.args:
-            if not arg.annotation:
+        args = node.args
+
+        for arg in args.args:
+            name = getattr(arg, "arg", None)
+            if not name:
+                continue
+
+            if name in SKIP_PARAM_NAMES:
+                continue
+
+            if getattr(arg, "annotation", None) is None:
                 issues.append(CodeIssue(
                     file=file_path,
-                    line=arg.lineno,
-                    message=f"❌ [bold yellow]Missing type annotation for parameter:[/bold yellow] [bold]{arg.arg}[/bold]",
-                    severity=SeverityLevel.INFO,
+                    line=getattr(arg, "lineno", node.lineno),
+                    message=f"❌ [bold yellow]Missing type annotation for parameter:[/bold yellow] {name}",
+                    severity=missing_annotation_rule.severity,
                     rule_id="missing_type_annotation",
-                    suggestion="[italic]Add type annotation to improve code clarity and enable static checking.[/italic]"
+                    suggestion="[italic]Add a type annotation for the parameter (e.g. `name: str`).[/italic]"
                 ))
 
 
-        if not func_node.returns:
-            issues.append(CodeIssue(
-                file=file_path,
-                line=func_node.lineno,
-                message=f"❌ [bold yellow]Missing return type annotation for function:[/bold yellow] [bold]{func_node.name}[/bold]",
-                severity=SeverityLevel.INFO,
-                rule_id="missing_type_annotation",
-                suggestion="[italic]Add return type annotation to document function behavior.[/italic]"
-            ))
+        if getattr(args, "vararg", None):
+            var = args.vararg
+            name = getattr(var, "arg", None)
+            if name and name not in SKIP_PARAM_NAMES and getattr(var, "annotation", None) is None:
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=getattr(var, "lineno", node.lineno),
+                    message=f"❌ [bold yellow]Missing type annotation for var-positional parameter:[/bold yellow] *{name}",
+                    severity=missing_annotation_rule.severity,
+                    rule_id="missing_type_annotation",
+                    suggestion="[italic]Annotate varargs like `*args: tuple[int, ...]` or `*args: Any`.[/italic]"
+                ))
+
+
+        if getattr(args, "kwarg", None):
+            kw = args.kwarg
+            name = getattr(kw, "arg", None)
+            if name and name not in SKIP_PARAM_NAMES and getattr(kw, "annotation", None) is None:
+                issues.append(CodeIssue(
+                    file=file_path,
+                    line=getattr(kw, "lineno", node.lineno),
+                    message=f"❌ [bold yellow]Missing type annotation for var-keyword parameter:[/bold yellow] **{name}",
+                    severity=missing_annotation_rule.severity,
+                    rule_id="missing_type_annotation",
+                    suggestion="[italic]Annotate kwargs like `**kwargs: dict[str, Any]` or `**kwargs: Any`.[/italic]"
+                ))
 
         return issues
 
@@ -559,25 +659,110 @@ class CodeAnalyzer:
         return issues
 
 
-    def _check_type_mismatch(self, ann_assign_node: ast.AnnAssign, file_path: Path) -> list[CodeIssue]:
-        """Check if annotated type matches the assigned value."""
+    def _check_type_mismatch(self, node: ast.AnnAssign, file_path: Path) -> list[CodeIssue]:
+        """Check simple type mismatches between annotation and assigned value."""
         issues: list[CodeIssue] = []
-
-        if not isinstance(ann_assign_node.target, ast.Name):
+        type_mismatch_rule = self.config.rules.get("type_mismatch")
+        if not type_mismatch_rule or not type_mismatch_rule.enabled:
             return issues
 
-        var_name = ann_assign_node.target.id
-        annotation_type = self._annotation_to_string(ann_assign_node.annotation)
-        value_type = self._value_to_type_string(ann_assign_node.value)
+        def _annotation_base(a: ast.AST) -> Optional[str]:
+            # ast.Subscript (like list[int], List[int], etc.)
+            if isinstance(a, ast.Subscript):
+                return _annotation_base(a.value)
 
-        if value_type and annotation_type and not self._types_are_compatible(annotation_type, value_type):
+            # Name: list, int, etc.
+            if isinstance(a, ast.Name):
+                return a.id.lower()
+
+            # Attribute: typing.List -> attr == 'List' -> list
+            if isinstance(a, ast.Attribute):
+                return getattr(a, "attr", None).lower() if getattr(a, "attr", None) else None
+
+            # Constant string annotation (from __future__ annotations)
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                s = a.value.strip()
+                if s:
+                    base = s.split("[", 1)[0].split(".", 1)[-1]
+                    return base.lower()
+
+                return None
+
+            return None
+
+        def _value_base(v: ast.AST) -> Optional[str]:
+            # Literal list/tuple/set/dict / comprehensions
+            if isinstance(v, (ast.List, ast.ListComp)):
+                return "list"
+
+            if isinstance(v, (ast.Tuple, ast.TupleComp)) if hasattr(ast, "TupleComp") else isinstance(v, ast.Tuple):
+                # TupleComp not present in all Python AST variants; fallback above
+                return "tuple"
+
+            if isinstance(v, ast.Set):
+                return "set"
+
+            if isinstance(v, ast.Dict):
+                return "dict"
+
+            # Constants: numbers/str/bool
+            if isinstance(v, ast.Constant):
+                val = v.value
+                return type(val).__name__.lower() if val is not None else None
+
+            # Call like list(...), dict(...), or factory function
+            if isinstance(v, ast.Call):
+                func = v.func
+                if isinstance(func, ast.Name):
+                    return func.id.lower()
+
+                if isinstance(func, ast.Attribute):
+                    # e.g. collections.defaultdict(...) -> attribute name
+                    return getattr(func, "attr", None).lower() if getattr(func, "attr", None) else None
+
+            # Fallback: we cannot infer
+            return None
+
+
+        ann_base = _annotation_base(node.annotation) if getattr(node, "annotation", None) else None
+        value_node = getattr(node, "value", None)
+        value_base = _value_base(value_node) if value_node is not None else None
+
+        if not ann_base or not value_base:
+            return issues
+
+        # Normalize some common synonyms from typing (List -> list, Dict -> dict, etc.)
+        synonyms = {
+            "list": {"list"},
+            "dict": {"dict"},
+            "tuple": {"tuple"},
+            "set": {"set"},
+            "str": {"str"},
+            "int": {"int"},
+            "float": {"float"},
+            "bool": {"bool"},
+        }
+
+        # If annotation is a typing alias like 'list'/'list' -> handled via ann_base already.
+        # Consider match when both bases belong to same family (e.g., annotation 'list' and value 'list').
+        match = False
+        if ann_base == value_base:
+            match = True
+
+        else:
+            for k, v in synonyms.items():
+                if ann_base == k and value_base in v:
+                    match = True
+                    break
+
+        if not match:
             issues.append(CodeIssue(
                 file=file_path,
-                line=ann_assign_node.lineno,
-                message=f"❌ [bold yellow]Type mismatch:[/bold yellow] [bold]{var_name}[/bold] is annotated as [yellow]{annotation_type}[/yellow] but assigned [red]{value_type}[/red]",
-                severity=SeverityLevel.INFO,
+                line=getattr(node, "lineno", 0),
+                message=f"❌ [bold yellow]Type mismatch:[/bold yellow] {getattr(node.target, 'id', 'value')} is annotated as {ann_base} but assigned {value_base}",
+                severity=type_mismatch_rule.severity,
                 rule_id="type_mismatch",
-                suggestion="[italic]Fix the type annotation or the assigned value to resolve the type conflict.[/italic]"
+                suggestion="[italic]Fix the annotation or the assigned value so their types match.[/italic]"
             ))
 
         return issues
@@ -590,15 +775,156 @@ class CodeAnalyzer:
         if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not func_node.returns:
             return issues
 
-        return_annotation = self._annotation_to_string(func_node.returns)
-        return_types = self._get_function_return_types(func_node)
+        return_annotation = (self._annotation_to_string(func_node.returns) or "").strip()
+        return_types = self._get_function_return_types(func_node) or []
 
-        for return_type in return_types:
-            if return_type and return_annotation and not self._types_are_compatible(return_annotation, return_type):
+        if not return_annotation or not return_types:
+            return issues
+
+        # A set of markers that mean "unknown/uninformative"
+        UNKNOWN_TOKENS = {"unknown", "<unknown>", "any", "anytype", "none", "nonetype", "none_type", "mixed"}
+
+        def is_informative_type(s: str) -> bool:
+            """Вернёт True, если строка выглядит как осмысленный тип."""
+            if not s or not isinstance(s, str):
+                return False
+
+            s2 = s.strip()
+            if not s2:
+                return False
+
+            low = s2.lower()
+            if low in UNKNOWN_TOKENS:
+                return False
+
+            if s2 == func_node.name:
+                return False
+
+            builtin_simple = {"int", "str", "bool", "float", "list", "dict", "set", "tuple", "bytes", "none"}
+            if low in builtin_simple:
+                return True
+
+            if ("[" in s2 and "]" in s2) or "." in s2 or "typing." in s2 or "optional" in low or "union" in low or "|" in s2:
+                return True
+
+            if s2 and s2[0].isupper():
+                return True
+
+            if any(tok in low for tok in ("list", "dict", "tuple", "set", "iter", "sequence", "mapping", "callable")):
+                return True
+
+            return False
+
+        normed: list[str] = []
+        for rt in return_types:
+            if not rt or not isinstance(rt, str):
+                continue
+
+            s = rt.strip()
+            if s:
+                normed.append(s)
+
+        if not any(is_informative_type(t) for t in normed):
+            return issues
+
+        filtered_return_types = [t for t in normed if is_informative_type(t)]
+        if not filtered_return_types:
+            return issues
+
+        def canonical_base(s: str) -> str:
+            if not s:
+                return ""
+
+            s = s.strip()
+            if s.startswith("typing."):
+                s = s[len("typing."):]
+
+            if "[" in s:
+                s = s.split("[", 1)[0]
+
+            return s.strip()
+
+        base_annotations: list[str] = [return_annotation]
+        ann = return_annotation
+        ann_low = ann.lower()
+
+        if (ann.startswith("Optional[") and ann.endswith("]")) or (ann.startswith("typing.Optional[") and ann.endswith("]")):
+            inner = ann.split("[", 1)[1][:-1].strip()
+            base_annotations = [inner, "None"]
+
+        elif (ann.startswith("Union[") and ann.endswith("]")) or (ann.startswith("typing.Union[") and ann.endswith("]")):
+            inner = ann.split("[", 1)[1][:-1]
+            parts = [p.strip() for p in inner.split(",") if p.strip()]
+            base_annotations = parts or base_annotations
+
+        elif "|" in ann:
+            parts = [p.strip() for p in ann.split("|") if p.strip()]
+            if parts:
+                base_annotations = parts
+    
+        elif ann_low == "none":
+            base_annotations = ["None"]
+
+        base_annotations = [canonical_base(b) for b in base_annotations if b]
+
+        def types_compatible_with_heuristics(base_ann: str, ret_type: str) -> bool:
+            base_ann_s = (base_ann or "").strip()
+            ret_s = (ret_type or "").strip()
+            if not base_ann_s or not ret_s:
+                return False
+
+            if base_ann_s.lower() in UNKNOWN_TOKENS or ret_s.lower() in UNKNOWN_TOKENS:
+                return True
+
+            try:
+                if self._types_are_compatible(base_ann_s, ret_s):
+                    return True
+
+            except Exception:
+                pass
+
+            bc = canonical_base(base_ann_s).lower()
+            rc = canonical_base(ret_s).lower()
+
+            if bc and rc and bc == rc:
+                return True
+
+            # int <-> bool: in Python bool is a subclass of int, often 0/1 are used as boolean values
+            if bc == "bool" and rc == "int":
+                return True
+
+            synonyms = {
+                "list": {"list"},
+                "dict": {"dict"},
+                "tuple": {"tuple"},
+                "set": {"set"},
+                "str": {"str"},
+                "int": {"int"},
+                "float": {"float"},
+                "bool": {"bool"}
+            }
+
+            if bc in synonyms and rc in synonyms.get(bc, {rc}):
+                return True
+
+            return False
+
+        for return_type in filtered_return_types:
+            compatible = False
+            for base_ann in base_annotations:
+                if types_compatible_with_heuristics(base_ann, return_type):
+                    compatible = True
+                    break
+
+            if not compatible:
                 issues.append(CodeIssue(
                     file=file_path,
                     line=func_node.lineno,
-                    message=f"❌ [bold yellow]Return type mismatch:[/bold yellow] Function [bold]{func_node.name}[/bold] returns [red]{return_type}[/red] but annotated as [yellow]{return_annotation}[/yellow]",
+                    message=(
+                        f"❌ [bold yellow]Return type mismatch:[/bold yellow] "
+                        f"Function [bold]{func_node.name}[/bold] returns [red]{return_type}[/red] "
+                        f"but annotated as [yellow]{return_annotation}[/yellow]"
+                    ),
                     severity=SeverityLevel.INFO,
                     rule_id="type_mismatch",
                     suggestion="[italic]Fix the return type annotation or the returned values to resolve the type conflict.[/italic]"
@@ -967,6 +1293,24 @@ class CodeAnalyzer:
                         is_mapping_key = True
 
                 if is_annotation_like or is_mapping_key:
+                    continue
+
+                # If the next significant token is on another line, this ':' most likely
+                # terminates a block (if/for/def/class/while/etc.) — skip "space after" check.
+                if nxt and nxt.start[0] != start_line:
+                    # keep checking "space before ':'" below, but skip checking "after" since colon ends the line
+                    # (nothing to do for 'after' in this case)
+                    if prev and start_col > prev.end[1]:
+                        if not (in_brackets and prev.string in ("[", ",")):
+                            issues.append(CodeIssue(
+                                file=file_path,
+                                line=start_line,
+                                message="❌ [bold yellow]Unexpected space before ':'[/bold yellow]",
+                                severity=severity,
+                                rule_id="pep8",
+                                suggestion="[italic]Remove spaces before ':' unless using extended slice with omitted elements.[/italic]"
+                            ))
+
                     continue
 
                 if prev and start_col > prev.end[1]:
