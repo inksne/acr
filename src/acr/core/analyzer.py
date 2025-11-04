@@ -1,6 +1,6 @@
 import ast
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any, cast
 
 from .models import CodeIssue, ReviewConfig, SeverityLevel
 from .git_utils import GitRepo
@@ -325,8 +325,9 @@ class CodeAnalyzer:
             # with ... as var:
             elif isinstance(node, ast.With):
                 for item in node.items:
-                    if getattr(item, "optional_vars", None) is not None:
-                        defined_names.update(_extract_names_from_target(item.optional_vars))
+                    opt = getattr(item, "optional_vars", None)
+                    if opt is not None:
+                        defined_names.update(_extract_names_from_target(cast(ast.AST, opt)))
 
             # exception handler: except Exception as e:
             elif isinstance(node, ast.ExceptHandler):
@@ -677,7 +678,8 @@ class CodeAnalyzer:
 
             # Attribute: typing.List -> attr == 'List' -> list
             if isinstance(a, ast.Attribute):
-                return getattr(a, "attr", None).lower() if getattr(a, "attr", None) else None
+                attr: str | None = getattr(a, "attr", None)
+                return attr.lower() if attr is not None else None
 
             # Constant string annotation (from __future__ annotations)
             if isinstance(a, ast.Constant) and isinstance(a.value, str):
@@ -718,7 +720,8 @@ class CodeAnalyzer:
 
                 if isinstance(func, ast.Attribute):
                     # e.g. collections.defaultdict(...) -> attribute name
-                    return getattr(func, "attr", None).lower() if getattr(func, "attr", None) else None
+                    attr: str | None = getattr(func, "attr", None)
+                    return attr.lower() if attr is not None else None
 
             # Fallback: we cannot infer
             return None
@@ -776,7 +779,7 @@ class CodeAnalyzer:
             return issues
 
         return_annotation = (self._annotation_to_string(func_node.returns) or "").strip()
-        return_types = self._get_function_return_types(func_node) or []
+        return_types: set[str] | list[Any] = self._get_function_return_types(func_node) or []
 
         if not return_annotation or not return_types:
             return issues
