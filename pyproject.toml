@@ -1,6 +1,6 @@
 [project]
 name = "acr"
-version = "0.2.3"
+version = "0.2.4"
 description = "ACR - Automated Code Review"
 authors = [
     {name = "inksne", email = "inksne@gmail.com"}
@@ -22,6 +22,10 @@ packages = [{include = "acr", from = "src"}]
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 
 [tool.mypy]
