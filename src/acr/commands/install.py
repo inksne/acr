@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ..core.git_utils import GitHookManager, GitRepo
-from .install_helpers import make_pre_commit_script, make_pre_push_script
+from .install_helpers import make_pre_commit_script, make_pre_push_script, _ensure_repo_path
 
 
 
@@ -22,13 +22,6 @@ app = typer.Typer(
 )
 
 console = Console()
-
-
-def _ensure_repo_path(repo_path: Optional[str]) -> Path:
-    if repo_path:
-        return Path(repo_path).expanduser().resolve()
-
-    return Path(".").resolve()
 
 
 @app.command()

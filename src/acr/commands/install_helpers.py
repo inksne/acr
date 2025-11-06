@@ -1,5 +1,7 @@
 from typing import Optional
 
+from pathlib import Path
+
 
 
 def make_pre_commit_script(python_exec: Optional[str], run_strict: bool = False) -> str:
@@ -140,9 +142,15 @@ def make_pre_push_script(python_exec: Optional[str], run_strict: bool = False) -
             else
                 echo "⚠️ ACR pre-push: review reported issues (exit code $rc)." >&2
             fi
-            # note: pre-push behavior preserved — by default we don't block push (caller may change)
             exit $rc
         fi
 
         exit 0
     """
+
+
+def _ensure_repo_path(repo_path: Optional[str]) -> Path:
+    if repo_path:
+        return Path(repo_path).expanduser().resolve()
+
+    return Path(".").resolve()
