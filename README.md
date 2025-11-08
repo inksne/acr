@@ -131,12 +131,7 @@ Here is the complete configuration file with all possible settings:
 # -----------------------
 # Global settings
 # -----------------------
-max_line_length: 100         # Global default max line length (overrides per-rule PEP8 default)
-output_format: "json"        # "rich" | "text" | "json" — preferred output format
-strict: false                # If true, treat warnings as failing (used by some commands/hooks)
-# If set to true, commands like `staged`/`current` behave like `--strict` by default.
 
-# Patterns / Paths
 ignore_patterns:             # Glob patterns to ignore specific files (but not whole directories)
   - "venv/**"
   - "**/*.pyc"
@@ -147,33 +142,6 @@ exclude_paths:               # Paths (or globs) to completely exclude from analy
   - "vendor"
   - "third_party"
   - "build"
-
-# -----------------------
-# Hook-related defaults
-# -----------------------
-hooks:
-  pre_commit_strict: false   # Default for installed pre-commit hook: run with --strict?
-  pre_push_blocking: false  # If true, pre-push will block pushes on issues (otherwise only warn)
-  python_exec: null         # Optional: explicit python executable to embed in generated hooks.
-
-# -----------------------
-# Reporting / CI
-# -----------------------
-reporting:
-  save_json: false          # Save JSON report to a file after each run
-  json_path: ".acr/reports/latest.json"
-  fail_on_ci: true          # In CI environments, treat warnings as errors if true
-
-# -----------------------
-# Per-path rule overrides (optional)
-# Example: disable some rules for legacy code.
-# -----------------------
-per_path_rules:
-  "src/legacy/**":
-    pep8:
-      enabled: false
-    magic_number:
-      enabled: false
 
 # -----------------------
 # Rules
@@ -188,27 +156,19 @@ rules:
     parameters:
       line_mode: "strip_indent"  # pep8 (default) | strip_indent (the latter skips leading spaces)
       max_line_length: 100        # override local PEP8 line length
-      max_blank_lines: 2         # max blank lines between top-level definitions
-      ignore:                     # list of PEP8 message substrings or codes to ignore
-        - "line too long"
-        - "inline comment"
-      # Note: analyzer may use its own subset of checks
+      max_blank_lines: 5         # max blank lines between top-level definitions
 
   magic_number:
     enabled: true
     severity: info
     parameters:
       ignored_numbers: [0, 1, -1, 100, 1000]  # numbers to never treat as magic
-      allow_in_constants: true                # if true, numbers assigned to UPPER_CASE or annotated Final are exempt
-      allow_in_enums: true                    # do not flag numbers inside enum definitions
-      allow_in_tests: true                    # relax rule in test files (if path matches "*tests*")
 
   long_function:
     enabled: true
     severity: warning
     parameters:
       max_lines: 50           # maximum allowed lines in a function before it's considered "long"
-      ignore_one_line: true   # ignore trivial one-line functions
 
   high_complexity:
     enabled: true
@@ -223,47 +183,6 @@ rules:
       ignore_modules:   # imports that will not be considered unused
         - "__future__"
         - "typing"
-      allow_aliases: true      # allow imports that are imported for API re-export (e.g., __all__)
-      ignore_in_init: true     # in __init__.py treat some imports as intentional re-exports
-
-  unused_variable:
-    enabled: true
-    severity: warning
-    parameters:
-      ignore_pattern:                # ignore variables matching these name patterns (glob-like)
-        - "_*"                       # private / intentionally unused
-      ignore_in_tests: true          # skip checks in test directories
-
-  undefined_variable:
-    enabled: true
-    severity: error
-    parameters:
-      ignore_builtins: true          # don't flag builtin names
-      ignore_patterns:               # list of name patterns to ignore
-        - "os"                       # example: if you treat some names specially
-      allow_loop_targets: true       # allow variables introduced by 'for' loop targets without prior def
-
-  missing_type_annotation:
-    enabled: true
-    severity: info
-    parameters:
-      ignore_private: true           # do not require annotations for names starting with _
-      min_lines: 3                   # do not warn for very short functions (< min_lines)
-      require_returns: false         # require return annotation only if function returns non-None
-
-  incorrect_type_annotation:
-    enabled: true
-    severity: info
-    parameters:
-      allow_final_as_str: true       # accept "Final[str]" stringified annotations
-
-  type_mismatch:
-    enabled: true
-    severity: info
-    parameters:
-      tolerance:                      # custom mapping / tolerance rules for type checking
-        "Final[str]": "str"
-        "List[int]": "list[int]"
 ```
 
 ## Note
