@@ -110,7 +110,7 @@ class CodeAnalyzer:
         if not magic_number_rule or not magic_number_rule.enabled:
             return issues
 
-        ignored_numbers = {0, 1, -1, 100, 1000}
+        ignored_numbers = magic_number_rule.parameters.get("ignored_numbers", {0, 1, -1, 100, 1000})
 
         # First pass: collect line numbers of constants that are assigned to module-level UPPER_CASE names
         # or annotated with Final — these should NOT be treated as magic numbers.
@@ -208,7 +208,7 @@ class CodeAnalyzer:
             return issues
 
         imports: dict[str, tuple[int, str, str]] = {}
-
+        ignore_modules = unused_import_rule.parameters.get("ignore_modules", [])
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
@@ -224,6 +224,9 @@ class CodeAnalyzer:
 
 
         for imported_name, (line, original_name, alias) in imports.items():
+            if imported_name in ignore_modules:
+                continue
+
             if imported_name not in used_names:
                 if alias:
                     display_name = f"{original_name} (as {alias})"
@@ -246,12 +249,18 @@ class CodeAnalyzer:
     def _check_complex_functions(self, tree: ast.AST, file_path: Path) -> list[CodeIssue]:
         """Check for functions with high complexity."""
         issues: list[CodeIssue] = []
-        
+        complex_rule = self.config.rules.get("high_complexity")
+
+        if not complex_rule or not complex_rule.enabled:
+            return issues
+
+        max_complexity = complex_rule.parameters.get("max_complexity", MAX_COMPLEXITY)
+
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 complexity = self._calculate_complexity(node)
                 
-                if complexity > MAX_COMPLEXITY:
+                if complexity > max_complexity:
                     issues.append(CodeIssue(
                         file=file_path,
                         line=node.lineno,
@@ -984,13 +993,17 @@ class CodeAnalyzer:
     def _check_blank_lines(self, lines: list[str], file_path: Path) -> list[CodeIssue]:
         """Check for proper blank line usage (PEP 8)."""
         issues: list[CodeIssue] = []
+        blank_line_rule = self.config.rules.get("pep8")
         blank_line_count = 0
+
+        if blank_line_rule:
+            max_blank_lines = blank_line_rule.parameters.get("max_blank_lines", MAX_BLANK_LINES)
 
         for i, line in enumerate(lines, 1):
             stripped_line = line.rstrip()
             if not stripped_line:
                 blank_line_count += 1
-                if blank_line_count > MAX_BLANK_LINES:
+                if blank_line_count > max_blank_lines:
                     issues.append(CodeIssue(
                         file=file_path,
                         line=i,
