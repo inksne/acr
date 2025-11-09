@@ -1,31 +1,40 @@
-[project]
-name = "acr"
+[tool.poetry]
+name = "acr-cli"
 version = "0.2.6"
 description = "ACR - Automated Code Review"
-authors = [
-    {name = "inksne", email = "inksne@gmail.com"}
-]
+authors = ["inksne <inksne@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "typer (>=0.19.2,<0.20.0)",
-    "pytest (>=8.4.2,<9.0.0)",
-    "mypy (>=1.18.2,<2.0.0)",
-    "gitpython (>=3.1.45,<4.0.0)",
-    "types-pyyaml (>=6.0.12.20250915,<7.0.0.0)",
-]
-
-[tool.poetry]
 packages = [{include = "acr", from = "src"}]
+
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+typer = ">=0.19.2,<0.20.0"
+pytest = ">=8.4.2,<9.0.0"
+gitpython = ">=3.1.45,<4.0.0"
+types-pyyaml = ">=6.0.12.20250915,<7.0.0.0"
+rich = "14.1.0"
+pyyaml = "^6.0.3"
+
+
+[tool.poetry.group.dev.dependencies]
+python = ">=3.9"
+typer = ">=0.19.2,<0.20.0"
+pytest = ">=8.4.2,<9.0.0"
+mypy = ">=1.18.2,<2.0.0"
+gitpython = ">=3.1.45,<4.0.0"
+types-pyyaml = ">=6.0.12.20250915,<7.0.0.0"
+rich = "14.1.0"
+pyyaml = "^6.0.3"
+
+
+[tool.poetry.scripts]
+acr = "acr.cli:main"
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
-
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 
 [tool.mypy]

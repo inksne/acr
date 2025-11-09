@@ -14,7 +14,7 @@ ACR is a utility for automatic static analysis of Python code with git integrati
 
 ACR can be installed using pip:
 
-```pip install acr```
+```pip install acr-cli```
 
 ## Quick Start
 
