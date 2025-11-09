@@ -4,7 +4,6 @@ version = "0.2.6"
 description = "ACR - Automated Code Review"
 authors = ["inksne <inksne@gmail.com>"]
 readme = "README.md"
-licence = "MIT"
 packages = [{include = "acr", from = "src"}]
 
 
