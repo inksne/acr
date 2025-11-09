@@ -1,6 +1,5 @@
 __pycache__/
 hooks/
-dist/
 .mypy_cache/
 .pytest_cache/
 .acr.yaml

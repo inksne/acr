@@ -1,0 +1,53 @@
+name: ACR Publish
+
+on:
+  push:
+    tags:
+      - 'v*'  # trigger for tags like v1.2.3
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip build twine
+
+      - name: Install deps (for tests)
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Build distributions
+        run: |
+          poetry build
+        env:
+          POETRY_CACHE_DIR: ${{ runner.temp }}/poetry-cache
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m twine upload dist/* --non-interactive
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            Release ${{ github.ref_name }}
+          artifacts: dist/*
+          draft: false
+          prerelease: false
