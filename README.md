@@ -40,14 +40,14 @@ The utility can install pre-commit/pre-push hooks in the directory you specify (
 
 Сommands for working with hooks:
 
-- ```acr install init-hooks-path --repo /path/to/repo```  
+```acr install init-hooks-path --repo /path/to/repo```  
 Creates a folder in the repository (hooks/ by default) and calls ```git config core.hooksPath hooks```
 
 This switches git so that it looks for hooks not in .git/hooks, but in the specified folder inside the repository.  This is useful if you want to version hooks (so that you can see them in the repo and synchronize them with clones).
 
 **IMPORTANT: if you have already installed hooks in .git/hooks, init_hooks_path will not move them automatically - you need to manually place/copy the scripts into hooks/ and commit.**
 
-- ```acr install hook pre-commit -r /path/to/repo```  
+```acr install hook pre-commit -r /path/to/repo```  
 Installs a pre-commit hook in repo/.git/hooks (or in hooks/ when core.hooksPath is pre-configured).
 
 ### What exactly is written to the hook?
