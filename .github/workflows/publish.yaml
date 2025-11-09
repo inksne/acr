@@ -1,6 +1,5 @@
 name: ACR Publish
 
-# Запускается по завершению другого workflow с именем "ACR CI"
 on:
   workflow_run:
     workflows: ["ACR CI"]
@@ -9,7 +8,6 @@ on:
 
 jobs:
   publish:
-    # Выполняем только если CI завершился успешно
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
@@ -40,6 +38,7 @@ jobs:
         if: ${{ steps.check_tag.outputs.no_tag == 'true' }}
         run: |
           echo "No tag pointing at commit $HEAD_SHA — skipping publish."
+          # exit 0 to finish job normally (not fail)
           exit 0
 
       - name: Set up Python
@@ -64,14 +63,24 @@ jobs:
         env:
           POETRY_CACHE_DIR: ${{ runner.temp }}/poetry-cache
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI (conditional)
+        # Will only be executed if ENABLE_PUBLISH = "true" is set in Settings -> Secrets -> Actions
+        if: ${{ secrets.ENABLE_PUBLISH == 'true' }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
+          echo "Publishing to PyPI..."
           python -m twine upload dist/* --non-interactive
 
-      - name: Create GitHub Release
+      - name: Publish skipped message
+        if: ${{ secrets.ENABLE_PUBLISH != 'true' }}
+        run: |
+          echo "Publishing to PyPI skipped because secret ENABLE_PUBLISH != 'true'."
+          echo "Set repository secret ENABLE_PUBLISH to 'true' to enable real publish."
+
+      - name: Create GitHub Release (conditional)
+        if: ${{ secrets.ENABLE_PUBLISH == 'true' }}
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ steps.check_tag.outputs.release_tag }}
@@ -81,3 +90,9 @@ jobs:
           artifacts: dist/*
           draft: false
           prerelease: false
+
+      - name: Create local release artifact (for testing)
+        if: ${{ secrets.ENABLE_PUBLISH != 'true' }}
+        run: |
+          echo "Skipping creating GitHub Release (ENABLE_PUBLISH != 'true')."
+          echo "You can still download dist/ from CI artifacts to inspect built packages."
