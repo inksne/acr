@@ -31,5 +31,8 @@ def callback(ctx: typer.Context, version: bool = typer.Option(False, '--version'
         raise typer.Exit(1)
 
 
-if __name__ == '__main__':
+def main():
     app()
+
+if __name__ == '__main__':
+    main()
